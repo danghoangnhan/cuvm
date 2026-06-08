@@ -1,0 +1,21 @@
+[package]
+name = "cuvm-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "cuvm"
+path = "src/main.rs"
+
+[dependencies]
+cuvm-app = { path = "../cuvm-app" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+insta = { workspace = true }
