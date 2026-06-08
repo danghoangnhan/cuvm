@@ -2,9 +2,11 @@
 
 #![forbid(unsafe_code)]
 
+pub mod atomic;
 pub mod error;
 pub mod layout;
 
+pub use atomic::write_atomic;
 pub use error::{Result, StoreError};
 pub use layout::Layout;
 
