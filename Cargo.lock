@@ -273,7 +273,10 @@ dependencies = [
 name = "cuvm-nvidia"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "cuvm-core",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
