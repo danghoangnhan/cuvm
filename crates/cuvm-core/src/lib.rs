@@ -12,10 +12,10 @@ pub mod manifest;
 pub mod version;
 
 pub use domain::{
-    Alias, Arch, Bundle, Companion, Cudnn, Driver, GpuClass, Os, Pin, Platform, Shell, Source,
-    Toolkit,
+    current_platform, Alias, Arch, Bundle, Companion, Cudnn, Driver, GpuClass, Os, Pin, Platform,
+    Shell, Source, Toolkit,
 };
 pub use envplan::EnvPlan;
 pub use error::{CompatError, CoreError, CoreResult};
-pub use manifest::{BundleRecord, DriverRecord, Manifest, VersionMeta};
+pub use manifest::{BundleRecord, DriverRecord, Manifest, VersionMeta, SCHEMA_VERSION};
 pub use version::Version;

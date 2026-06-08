@@ -24,6 +24,26 @@ pub struct Platform {
     pub arch: Arch,
 }
 
+/// Returns the `Platform` for the current compilation target.
+#[must_use]
+pub fn current_platform() -> Platform {
+    Platform {
+        os: if cfg!(target_os = "windows") {
+            Os::Windows
+        } else {
+            Os::Linux
+        },
+        arch: if cfg!(target_arch = "x86_64") {
+            Arch::X86_64
+        } else if cfg!(target_arch = "aarch64") {
+            Arch::Aarch64
+        } else {
+            // sbsa is also aarch64-based; fall back to X86_64 for unknown targets
+            Arch::X86_64
+        },
+    }
+}
+
 impl Platform {
     /// The redist platform-directory key, e.g. `"linux-x86_64"`.
     #[must_use]

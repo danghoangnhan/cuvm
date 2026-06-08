@@ -1,3 +1,5 @@
+//! Serde state types: on-disk `manifest.json` and per-version `.cuvm-meta.json`.
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -5,44 +7,70 @@ use time::OffsetDateTime;
 
 use crate::Source;
 
+/// Bump when an incompatible on-disk change ships. Reader rejects anything higher.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// Root document at `$CUVM_HOME/manifest.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     pub schema_version: u32,
+    #[serde(default)]
     pub bundles: Vec<BundleRecord>,
+    #[serde(default)]
     pub aliases: BTreeMap<String, String>,
+    #[serde(default)]
     pub pins: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub last_driver: Option<DriverRecord>,
 }
 
+impl Default for Manifest {
+    fn default() -> Self {
+        Manifest {
+            schema_version: SCHEMA_VERSION,
+            bundles: Vec::new(),
+            aliases: BTreeMap::new(),
+            pins: BTreeMap::new(),
+            last_driver: None,
+        }
+    }
+}
+
+/// One installed/adopted bundle row in the manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundleRecord {
     pub version: String,
     pub source: Source,
+    /// Absolute external path for `Adopted`; `versions/<ver>` (relative to CUVM_HOME)
+    /// for `Downloaded`/`Supplied`.
     pub path: String,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cudnn: Option<String>,
+    #[serde(default)]
     pub components: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub installed_at: OffsetDateTime,
 }
 
+/// Sidecar at `$CUVM_HOME/versions/<ver>/.cuvm-meta.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionMeta {
     pub version: String,
     pub source: Source,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cudnn: Option<String>,
+    #[serde(default)]
     pub components: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
     pub has_lib64: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub installed_at: OffsetDateTime,
 }
 
+/// Last driver probe cached in the manifest for offline `doctor`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DriverRecord {
     pub version: String,
