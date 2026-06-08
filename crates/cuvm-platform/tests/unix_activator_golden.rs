@@ -194,10 +194,15 @@ fn empty_path_edge_does_not_emit_trailing_separator() {
         !path.trim_end_matches(']').ends_with(':'),
         "trailing sep: {path}"
     );
-    // LD_LIBRARY_PATH started unset => result is "<lib64>:" with the :- guard
-    // producing an empty tail; assert lib64 present and no double-sep.
+    // LD_LIBRARY_PATH started unset => result is "<lib64>" with the :+ guard
+    // producing no empty tail; assert lib64 present, no double-sep, and no
+    // trailing colon (which would cause the dynamic linker to search CWD).
     assert!(ld.contains("/lib64"), "lib64 missing: {ld}");
     assert!(!ld.contains("::"), "double-separator in LD: {ld}");
+    assert!(
+        !ld.trim_end_matches(']').ends_with(':'),
+        "trailing colon in LD_LIBRARY_PATH when unset: {ld}"
+    );
 }
 
 #[test]

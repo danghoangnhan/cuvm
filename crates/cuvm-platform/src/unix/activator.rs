@@ -34,13 +34,19 @@ fn render_env(plan: &EnvPlan) -> String {
     let _ = writeln!(out, "export CUDA_HOME=\"{}\"", plan.cuda_home);
     let _ = writeln!(out, "export CUDA_PATH=\"{}\"", plan.cuda_path);
     let _ = writeln!(out, "export CUDAToolkit_ROOT=\"{}\"", plan.toolkit_root);
-    // Prepend bin segments to PATH; use ${PATH:+:$PATH} so empty PATH does not
-    // produce a trailing colon.
+    // Prepend bin segments to PATH and lib segments to LD_LIBRARY_PATH using
+    // the same empty-guard form `${VAR:+:$VAR}` so that an unset (or empty)
+    // variable does not yield a trailing colon.  A trailing colon would make
+    // the dynamic linker / PATH search fall back to CWD — the classic
+    // current-working-directory injection hazard.
+    //
+    // Known M1 limitation: paths containing spaces or colons are not
+    // shell-escaped here (CUDA install roots are not expected to contain them);
+    // proper quoting/escaping is deferred to a later milestone.
     let _ = writeln!(out, "export PATH=\"{path_prepend}${{PATH:+:$PATH}}\"");
-    // Prepend lib64 to LD_LIBRARY_PATH, guarding the unset case with :-.
     let _ = writeln!(
         out,
-        "export LD_LIBRARY_PATH=\"{lib_prepend}:${{LD_LIBRARY_PATH:-}}\""
+        "export LD_LIBRARY_PATH=\"{lib_prepend}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}\""
     );
     let _ = writeln!(out, "export CUVM_CURRENT=\"{}\"", plan.current);
     // Breadcrumb: exactly the segments we prepended, colon-joined (spec §2.5).
