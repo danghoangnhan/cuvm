@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use cuvm_core::{Bundle, CoreErr, Pin, Result, Version};
+use cuvm_core::{Bundle, CoreError, CoreResult, Pin, Version};
 
 use crate::ports::{ResolveVia, Resolved, Resolver};
 
@@ -54,11 +54,11 @@ impl MemResolver {
 }
 
 impl Resolver for MemResolver {
-    fn resolve(&self, spec: &str) -> Result<Resolved> {
+    fn resolve(&self, spec: &str) -> CoreResult<Resolved> {
         // 1. Literal "latest" — global maximum.
         if spec == "latest" {
             let v = self.installed_versions().into_iter().max().ok_or_else(|| {
-                CoreErr::NotInstalled {
+                CoreError::NotInstalled {
                     spec: spec.to_string(),
                 }
             })?;
@@ -81,7 +81,7 @@ impl Resolver for MemResolver {
         }
 
         // 3. Version spec by field count.
-        let parsed = Version::parse(spec).map_err(|_| CoreErr::NotInstalled {
+        let parsed = Version::parse(spec).map_err(|_| CoreError::NotInstalled {
             spec: spec.to_string(),
         })?;
         let prefix = parsed.fields.as_slice();
@@ -97,7 +97,7 @@ impl Resolver for MemResolver {
         } else {
             self.newest_with_prefix(prefix)
         };
-        let v = chosen.ok_or_else(|| CoreErr::NotInstalled {
+        let v = chosen.ok_or_else(|| CoreError::NotInstalled {
             spec: spec.to_string(),
         })?;
         let bundle = self.bundle_for(&v).expect("version came from inventory");
@@ -109,7 +109,7 @@ impl Resolver for MemResolver {
         })
     }
 
-    fn resolve_from_dir(&self, cwd: &Path) -> Result<Option<Resolved>> {
+    fn resolve_from_dir(&self, cwd: &Path) -> CoreResult<Option<Resolved>> {
         match self.find_pin_upward(cwd)? {
             Some(pin) => {
                 let mut resolved = self.resolve(&pin.spec)?;
@@ -130,12 +130,12 @@ impl Resolver for MemResolver {
         }
     }
 
-    fn expand_alias(&self, name: &str) -> Result<String> {
+    fn expand_alias(&self, name: &str) -> CoreResult<String> {
         let mut seen: Vec<String> = Vec::new();
         let mut cur = name.to_string();
         loop {
             if seen.iter().any(|s| s == &cur) {
-                return Err(CoreErr::AliasCycle(name.to_string()));
+                return Err(CoreError::AliasCycle(name.to_string()));
             }
             match self.aliases.get(&cur) {
                 Some(next) => {
@@ -147,7 +147,7 @@ impl Resolver for MemResolver {
         }
     }
 
-    fn find_pin_upward(&self, cwd: &Path) -> Result<Option<Pin>> {
+    fn find_pin_upward(&self, cwd: &Path) -> CoreResult<Option<Pin>> {
         let mut dir: Option<&Path> = Some(cwd);
         while let Some(d) = dir {
             let candidate = d.join(".cuda-version");
@@ -210,7 +210,7 @@ mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use cuvm_core::CoreErr;
+    use cuvm_core::CoreError;
 
     use super::test_support::*;
     use super::*;
@@ -258,7 +258,7 @@ mod tests {
         let err = r.resolve("11.8").unwrap_err();
         assert_eq!(
             err,
-            CoreErr::NotInstalled {
+            CoreError::NotInstalled {
                 spec: "11.8".into()
             }
         );
@@ -272,7 +272,7 @@ mod tests {
         let err = r.resolve("12.4.2").unwrap_err();
         assert_eq!(
             err,
-            CoreErr::NotInstalled {
+            CoreError::NotInstalled {
                 spec: "12.4.2".into()
             }
         );
@@ -312,10 +312,10 @@ mod tests {
         // a -> b -> a
         let r = resolver(&["12.4.1"], &[("a", "b"), ("b", "a")]);
         let err = r.expand_alias("a").unwrap_err();
-        assert_eq!(err, CoreErr::AliasCycle("a".into()));
+        assert_eq!(err, CoreError::AliasCycle("a".into()));
         // resolve() surfaces the same typed error, not a stack overflow.
         let rerr = r.resolve("a").unwrap_err();
-        assert_eq!(rerr, CoreErr::AliasCycle("a".into()));
+        assert_eq!(rerr, CoreError::AliasCycle("a".into()));
     }
 
     #[test]
@@ -323,7 +323,7 @@ mod tests {
         let r = resolver(&["12.4.1"], &[("loop", "loop")]);
         assert_eq!(
             r.expand_alias("loop").unwrap_err(),
-            CoreErr::AliasCycle("loop".into())
+            CoreError::AliasCycle("loop".into())
         );
     }
 
@@ -335,7 +335,7 @@ mod tests {
         // a bogus non-version name with no alias -> NotInstalled.
         assert_eq!(
             r.resolve("nope").unwrap_err(),
-            CoreErr::NotInstalled {
+            CoreError::NotInstalled {
                 spec: "nope".into()
             }
         );

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use assert_fs::prelude::*;
 use cuvm_app::{MemResolver, ResolveVia, Resolver};
-use cuvm_core::{Arch, Bundle, CoreErr, Os, Platform, Source, Toolkit, Version};
+use cuvm_core::{Arch, Bundle, CoreError, Os, Platform, Source, Toolkit, Version};
 use time::OffsetDateTime;
 
 fn bundle(ver: &str) -> Bundle {
@@ -79,7 +79,7 @@ fn pin_to_uninstalled_version_is_not_installed() {
     let err = r.resolve_from_dir(tmp.path()).unwrap_err();
     assert_eq!(
         err,
-        CoreErr::NotInstalled {
+        CoreError::NotInstalled {
             spec: "11.8".into()
         }
     );

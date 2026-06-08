@@ -99,29 +99,29 @@ pub trait Resolver {
     /// Resolve a version spec to a concrete bundle.
     ///
     /// # Errors
-    /// Returns [`cuvm_core::CoreErr::NotInstalled`] if the spec cannot be matched
-    /// to an installed bundle, or [`cuvm_core::CoreErr::AliasCycle`] if a cycle
+    /// Returns [`cuvm_core::CoreError::NotInstalled`] if the spec cannot be matched
+    /// to an installed bundle, or [`cuvm_core::CoreError::AliasCycle`] if a cycle
     /// is detected during alias expansion.
-    fn resolve(&self, spec: &str) -> cuvm_core::Result<Resolved>;
+    fn resolve(&self, spec: &str) -> cuvm_core::CoreResult<Resolved>;
 
     /// Resolve from a directory's pin/alias context, if any applies.
     ///
     /// # Errors
     /// Forwards any error from [`Resolver::find_pin_upward`] or [`Resolver::resolve`].
-    fn resolve_from_dir(&self, cwd: &Path) -> cuvm_core::Result<Option<Resolved>>;
+    fn resolve_from_dir(&self, cwd: &Path) -> cuvm_core::CoreResult<Option<Resolved>>;
 
     /// Expand an alias name to its terminal (non-alias) spec.
     ///
     /// # Errors
-    /// Returns [`cuvm_core::CoreErr::AliasCycle`] if a cycle is detected.
-    fn expand_alias(&self, name: &str) -> cuvm_core::Result<String>;
+    /// Returns [`cuvm_core::CoreError::AliasCycle`] if a cycle is detected.
+    fn expand_alias(&self, name: &str) -> cuvm_core::CoreResult<String>;
 
     /// Find the nearest `.cuda-version` pin file walking upward from `cwd`.
     ///
     /// # Errors
     /// Returns an error only for unrecoverable I/O failures; permission errors
     /// on individual files are silently skipped.
-    fn find_pin_upward(&self, cwd: &Path) -> cuvm_core::Result<Option<Pin>>;
+    fn find_pin_upward(&self, cwd: &Path) -> cuvm_core::CoreResult<Option<Pin>>;
 }
 
 pub trait Activator {
