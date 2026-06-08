@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "snapshot": "CUDA 13.3, mid-2026",
+  "rows": [
+    { "cuda": "11.8", "linux_min": "520.61.05", "windows_min": "520.06" },
+    { "cuda": "12.0", "linux_min": "525.60.13", "windows_min": "527.41" },
+    { "cuda": "12.1", "linux_min": "530.30.02", "windows_min": "531.14" },
+    { "cuda": "12.2", "linux_min": "535.54.03", "windows_min": "536.25" },
+    { "cuda": "12.3", "linux_min": "545.23.06", "windows_min": "545.84" },
+    { "cuda": "12.4", "linux_min": "550.54.14", "windows_min": "551.61" },
+    { "cuda": "12.5", "linux_min": "555.42.02", "windows_min": "555.85" },
+    { "cuda": "12.6", "linux_min": "560.28.03", "windows_min": "560.76" },
+    { "cuda": "12.8", "linux_min": "570.26", "windows_min": "570.65" },
+    { "cuda": "12.9", "linux_min": "575.51.03", "windows_min": "576.02" },
+    { "cuda": "13.0", "linux_min": "580.65.06", "windows_min": null },
+    { "cuda": "13.1", "linux_min": "590.44.01", "windows_min": null },
+    { "cuda": "13.2", "linux_min": "595.45.04", "windows_min": null },
+    { "cuda": "13.3", "linux_min": "610.43.02", "windows_min": null }
+  ]
+}

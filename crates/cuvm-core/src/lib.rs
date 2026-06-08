@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod candidate;
+pub mod compat;
 pub mod domain;
 pub mod env_plan;
 pub mod envplan;
@@ -14,6 +15,7 @@ pub mod manifest;
 pub mod version;
 
 pub use candidate::Candidate;
+pub use compat::{CompatLookupError, CompatOutcome, CompatSeverity, DefaultCompatEngine};
 pub use domain::{
     current_platform, Alias, Arch, Bundle, Companion, Cudnn, Driver, GpuClass, Os, Pin, Platform,
     Shell, Source, Toolkit,
