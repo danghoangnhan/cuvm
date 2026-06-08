@@ -41,7 +41,7 @@ impl Default for Manifest {
 pub struct BundleRecord {
     pub version: String,
     pub source: Source,
-    /// Absolute external path for `Adopted`; `versions/<ver>` (relative to CUVM_HOME)
+    /// Absolute external path for `Adopted`; `versions/<ver>` (relative to `CUVM_HOME`)
     /// for `Downloaded`/`Supplied`.
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
