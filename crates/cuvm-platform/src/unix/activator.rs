@@ -2,6 +2,8 @@
 //! `EnvPlan`. Compiles on every host (runtime dispatch — spec §3); no
 //! `#[cfg]` here, the syscall floor lives elsewhere.
 
+use std::fmt::Write as _;
+
 use anyhow::{bail, Result};
 use cuvm_app::Activator;
 use cuvm_core::{plan_for, Bundle, EnvPlan, Shell};
@@ -9,50 +11,47 @@ use cuvm_core::{plan_for, Bundle, EnvPlan, Shell};
 /// The awk program that drops every PATH/LD segment present in `$CUVM_INJECTED`.
 /// `!($0 in d)&&NF` => keep segments not in the breadcrumb set and non-empty;
 /// `/usr/lib/wsl/lib` is never a breadcrumb member, so WSL driver libs survive.
-const STRIP_AWK: &str =
-    r#"awk -v RS=: -v ORS=: -v inj="$CUVM_INJECTED" 'BEGIN{n=split(inj,a,":");for(i=1;i<=n;i++)d[a[i]]=1} !($0 in d)&&NF{print}'"#;
+const STRIP_AWK: &str = r#"awk -v RS=: -v ORS=: -v inj="$CUVM_INJECTED" 'BEGIN{n=split(inj,a,":");for(i=1;i<=n;i++)d[a[i]]=1} !($0 in d)&&NF{print}'"#;
 
-/// Render the bash/zsh strip block: remove prior CUVM_INJECTED segments from
-/// PATH and LD_LIBRARY_PATH FIRST (spec §2.5/§8). Identical for bash and zsh.
+/// Render the bash/zsh strip block: remove prior `CUVM_INJECTED` segments from
+/// PATH and `LD_LIBRARY_PATH` FIRST (spec §2.5/§8). Identical for bash and zsh.
 fn render_strip() -> String {
     format!(
         "if [ -n \"${{CUVM_INJECTED:-}}\" ]; then\n\
-         \x20\x20PATH=\"$(printf '%s' \"$PATH\" | {awk} | sed 's/:$//')\"\n\
-         \x20\x20LD_LIBRARY_PATH=\"$(printf '%s' \"${{LD_LIBRARY_PATH:-}}\" | {awk} | sed 's/:$//')\"\n\
+         \x20\x20PATH=\"$(printf '%s' \"$PATH\" | {STRIP_AWK} | sed 's/:$//')\"\n\
+         \x20\x20LD_LIBRARY_PATH=\"$(printf '%s' \"${{LD_LIBRARY_PATH:-}}\" | {STRIP_AWK} | sed 's/:$//')\"\n\
          fi\n",
-        awk = STRIP_AWK,
     )
 }
 
 /// Render the full activation script for a POSIX shell from an `EnvPlan`.
 fn render_env(plan: &EnvPlan) -> String {
-    let mut out = String::new();
-    out.push_str(&render_strip());
-    out.push_str(&format!("export CUDA_HOME=\"{}\"\n", plan.cuda_home));
-    out.push_str(&format!("export CUDA_PATH=\"{}\"\n", plan.cuda_path));
-    out.push_str(&format!("export CUDAToolkit_ROOT=\"{}\"\n", plan.toolkit_root));
-    // Prepend bin segments to PATH (in order), each ahead of the existing PATH.
+    let mut out = render_strip();
     let path_prepend = plan.prepend_path.join(":");
-    out.push_str(&format!("export PATH=\"{path_prepend}:$PATH\"\n"));
-    // Prepend lib64 to LD_LIBRARY_PATH, guarding the unset case with :-.
     let lib_prepend = plan.prepend_lib.join(":");
-    out.push_str(&format!(
-        "export LD_LIBRARY_PATH=\"{lib_prepend}:${{LD_LIBRARY_PATH:-}}\"\n"
-    ));
-    out.push_str(&format!("export CUVM_CURRENT=\"{}\"\n", plan.current));
+    let injected = plan.injected.join(":");
+    // writeln! into a String is infallible; `let _ =` silences the unused-result lint.
+    let _ = writeln!(out, "export CUDA_HOME=\"{}\"", plan.cuda_home);
+    let _ = writeln!(out, "export CUDA_PATH=\"{}\"", plan.cuda_path);
+    let _ = writeln!(out, "export CUDAToolkit_ROOT=\"{}\"", plan.toolkit_root);
+    // Prepend bin segments to PATH; use ${PATH:+:$PATH} so empty PATH does not
+    // produce a trailing colon.
+    let _ = writeln!(out, "export PATH=\"{path_prepend}${{PATH:+:$PATH}}\"");
+    // Prepend lib64 to LD_LIBRARY_PATH, guarding the unset case with :-.
+    let _ = writeln!(
+        out,
+        "export LD_LIBRARY_PATH=\"{lib_prepend}:${{LD_LIBRARY_PATH:-}}\""
+    );
+    let _ = writeln!(out, "export CUVM_CURRENT=\"{}\"", plan.current);
     // Breadcrumb: exactly the segments we prepended, colon-joined (spec §2.5).
-    out.push_str(&format!(
-        "export CUVM_INJECTED=\"{}\"\n",
-        plan.injected.join(":")
-    ));
+    let _ = writeln!(out, "export CUVM_INJECTED=\"{injected}\"");
     out
 }
 
-/// Render a deactivation script: strip the prior CUVM_INJECTED segments and
+/// Render a deactivation script: strip the prior `CUVM_INJECTED` segments and
 /// clear all cuvm-owned vars. Does NOT prepend anything (spec §5 / §8).
 fn render_deactivate() -> String {
-    let mut out = String::new();
-    out.push_str(&render_strip());
+    let mut out = render_strip();
     out.push_str("unset CUDA_HOME CUDA_PATH CUDAToolkit_ROOT\n");
     out.push_str("unset CUVM_CURRENT CUVM_INJECTED\n");
     out

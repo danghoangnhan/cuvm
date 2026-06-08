@@ -284,6 +284,7 @@ dependencies = [
  "assert_fs",
  "cuvm-app",
  "cuvm-core",
+ "insta",
  "predicates",
  "tempfile",
  "time",

@@ -1,0 +1,11 @@
+---
+source: crates/cuvm-platform/tests/unix_activator_golden.rs
+assertion_line: 41
+expression: script
+---
+if [ -n "${CUVM_INJECTED:-}" ]; then
+  PATH="$(printf '%s' "$PATH" | awk -v RS=: -v ORS=: -v inj="$CUVM_INJECTED" 'BEGIN{n=split(inj,a,":");for(i=1;i<=n;i++)d[a[i]]=1} !($0 in d)&&NF{print}' | sed 's/:$//')"
+  LD_LIBRARY_PATH="$(printf '%s' "${LD_LIBRARY_PATH:-}" | awk -v RS=: -v ORS=: -v inj="$CUVM_INJECTED" 'BEGIN{n=split(inj,a,":");for(i=1;i<=n;i++)d[a[i]]=1} !($0 in d)&&NF{print}' | sed 's/:$//')"
+fi
+unset CUDA_HOME CUDA_PATH CUDAToolkit_ROOT
+unset CUVM_CURRENT CUVM_INJECTED

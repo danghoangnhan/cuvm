@@ -1,0 +1,16 @@
+---
+source: crates/cuvm-platform/tests/unix_activator_golden.rs
+assertion_line: 27
+expression: script
+---
+if [ -n "${CUVM_INJECTED:-}" ]; then
+  PATH="$(printf '%s' "$PATH" | awk -v RS=: -v ORS=: -v inj="$CUVM_INJECTED" 'BEGIN{n=split(inj,a,":");for(i=1;i<=n;i++)d[a[i]]=1} !($0 in d)&&NF{print}' | sed 's/:$//')"
+  LD_LIBRARY_PATH="$(printf '%s' "${LD_LIBRARY_PATH:-}" | awk -v RS=: -v ORS=: -v inj="$CUVM_INJECTED" 'BEGIN{n=split(inj,a,":");for(i=1;i<=n;i++)d[a[i]]=1} !($0 in d)&&NF{print}' | sed 's/:$//')"
+fi
+export CUDA_HOME="/home/u/.cuvm/versions/12.4.1"
+export CUDA_PATH="/home/u/.cuvm/versions/12.4.1"
+export CUDAToolkit_ROOT="/home/u/.cuvm/versions/12.4.1"
+export PATH="/home/u/.cuvm/versions/12.4.1/bin${PATH:+:$PATH}"
+export LD_LIBRARY_PATH="/home/u/.cuvm/versions/12.4.1/lib64:${LD_LIBRARY_PATH:-}"
+export CUVM_CURRENT="12.4.1"
+export CUVM_INJECTED="/home/u/.cuvm/versions/12.4.1/bin:/home/u/.cuvm/versions/12.4.1/lib64"

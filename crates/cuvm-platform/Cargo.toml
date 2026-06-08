@@ -17,5 +17,6 @@ time = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 assert_fs = { workspace = true }
+insta = { workspace = true }
 tempfile = { workspace = true }
 predicates = { workspace = true }

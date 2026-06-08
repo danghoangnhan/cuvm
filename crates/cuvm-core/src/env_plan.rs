@@ -7,6 +7,7 @@ use crate::{Bundle, EnvPlan};
 ///
 /// The two prepend segments (`bin`, `lib64`) are exactly the breadcrumb
 /// (`injected`) the Activator must strip on the next switch — see spec §2.5/§8.
+#[must_use]
 pub fn plan_for(bundle: &Bundle) -> EnvPlan {
     let root = bundle.toolkit.root.to_string_lossy().into_owned();
     let bin = format!("{root}/bin");
@@ -34,13 +35,20 @@ mod tests {
             version: Version::parse("12.4.1").unwrap(),
             source: Source::Downloaded,
             root: PathBuf::from("/home/u/.cuvm/versions/12.4.1"),
-            platform: Platform { os: Os::Linux, arch: Arch::X86_64 },
+            platform: Platform {
+                os: Os::Linux,
+                arch: Arch::X86_64,
+            },
             components: vec!["cuda_nvcc".to_string(), "cuda_cudart".to_string()],
             has_lib64: false,
             installed_at: OffsetDateTime::UNIX_EPOCH,
             checksum: None,
         };
-        Bundle { toolkit, cudnn: None, extra: vec![] }
+        Bundle {
+            toolkit,
+            cudnn: None,
+            extra: vec![],
+        }
     }
 
     #[test]
