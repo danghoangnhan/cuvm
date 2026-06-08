@@ -2,7 +2,10 @@
 //!
 //! Real I/O lands in WU-3. WU-0 placeholder only.
 
+#![forbid(unsafe_code)]
+
 /// Scaffold marker. Replaced by atomic store I/O in WU-3.
+#[must_use]
 pub fn placeholder() -> &'static str {
     "cuvm-store"
 }

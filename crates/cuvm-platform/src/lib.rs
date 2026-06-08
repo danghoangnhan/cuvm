@@ -4,6 +4,7 @@
 //! `new_activator` / `new_installer` runtime factories land in WU-1+.
 
 /// Scaffold marker. Replaced by per-OS backends in WU-1+.
+#[must_use]
 pub fn placeholder() -> &'static str {
     "cuvm-platform"
 }

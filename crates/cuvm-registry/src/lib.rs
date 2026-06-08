@@ -2,7 +2,10 @@
 //!
 //! Real parser lands in WU-10. WU-0 placeholder only.
 
+#![forbid(unsafe_code)]
+
 /// Scaffold marker. Replaced by the redist parser in WU-10.
+#[must_use]
 pub fn placeholder() -> &'static str {
     "cuvm-registry"
 }

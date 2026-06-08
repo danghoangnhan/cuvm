@@ -4,7 +4,7 @@
 
 A cross-platform CLI for installing, switching, pinning, and bundling multiple CUDA toolkits (and their companion libraries such as cuDNN), modeled on `nvm`/`gvm` but adapted to the realities of the CUDA stack.
 
-> Companion documents: `CUDA-Version-Manager-Research.md` (prior-art survey) and `CUVM-ADRs.md` (architecture decision records for the key trade-offs below).
+> Companion documents: `CUDA-Version-Manager-Research.md` (prior-art survey) and `CVM-ADRs.md` (architecture decision records for the key trade-offs below).
 
 ---
 
@@ -326,4 +326,4 @@ Unit tests for the Resolver (spec grammar, alias/`.cuda-version` resolution, ver
 
 ---
 
-*Decisions backing this design are recorded in `CUVM-ADRs.md`.*
+*Decisions backing this design are recorded in `CVM-ADRs.md`.*

@@ -1,6 +1,6 @@
 # CUVM — Architecture Decision Records
 
-*Companion to `CUVM-Design-Document.md`. Each ADR records one significant decision, the options weighed, and the consequences. Status reflects the locked requirements: cross-platform from day one, full scope including cuDNN, Word-of-the-author stack choice delegated to this analysis.*
+*Companion to `CVM-Design-Document.md`. Each ADR records one significant decision, the options weighed, and the consequences. Status reflects the locked requirements: cross-platform from day one, full scope including cuDNN, Word-of-the-author stack choice delegated to this analysis.*
 
 ---
 

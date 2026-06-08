@@ -3,7 +3,10 @@
 //! Real types (`Version`, `Bundle`, `EnvPlan`, compat tables, ...) land in
 //! later work units. This placeholder keeps the crate building under WU-0.
 
+#![forbid(unsafe_code)]
+
 /// Scaffold marker. Replaced by real domain types in WU-2+.
+#[must_use]
 pub fn placeholder() -> &'static str {
     "cuvm-core"
 }
