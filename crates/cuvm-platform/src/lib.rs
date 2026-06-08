@@ -1,18 +1,12 @@
-//! cuvm-platform — per-OS Activator + Installer backends.
+//! cuvm-platform — per-OS Activator/Installer backends behind a runtime factory.
 //!
-//! `#[cfg(unix)]` / `#[cfg(windows)]` syscall floors and the
-//! `new_activator` / `new_installer` runtime factories land in WU-1+.
+//! WU-1: stub backends returning `NotImplemented`. Real syscalls (registry,
+//! junction, broadcast, symlink) arrive behind `#[cfg]` in WU-5/WU-9/WU-13/WU-14.
 
-/// Scaffold marker. Replaced by per-OS backends in WU-1+.
-#[must_use]
-pub fn placeholder() -> &'static str {
-    "cuvm-platform"
-}
+pub mod unix;
+pub mod windows;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn placeholder_names_the_crate() {
-        assert_eq!(super::placeholder(), "cuvm-platform");
-    }
+/// Stable "not implemented yet" error for WU-1 stubs.
+pub(crate) fn not_impl(what: &str) -> anyhow::Error {
+    anyhow::anyhow!("{what}: not implemented (WU-1 stub)")
 }
