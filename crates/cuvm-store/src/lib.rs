@@ -6,11 +6,13 @@ pub mod atomic;
 pub mod error;
 pub mod layout;
 pub mod manifest_io;
+pub mod meta_io;
 
 pub use atomic::write_atomic;
 pub use error::{Result, StoreError};
 pub use layout::Layout;
 pub use manifest_io::{read_manifest, write_manifest};
+pub use meta_io::{read_meta, write_meta};
 
 impl Layout {
     /// Resolve from the real process environment and OS home directory.
