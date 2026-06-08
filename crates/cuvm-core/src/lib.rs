@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod domain;
+pub mod envplan;
 pub mod error;
 pub mod manifest;
 pub mod version;
@@ -11,6 +12,7 @@ pub use domain::{
     Alias, Arch, Bundle, Companion, Cudnn, Driver, GpuClass, Os, Pin, Platform, Shell, Source,
     Toolkit,
 };
+pub use envplan::EnvPlan;
 pub use error::CoreError;
 pub use manifest::{BundleRecord, DriverRecord, Manifest, VersionMeta};
 pub use version::Version;
