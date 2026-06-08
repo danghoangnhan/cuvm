@@ -1,0 +1,19 @@
+//! cuvm-app — use-cases and trait ports (Resolver, Activator, Installer, ...).
+//!
+//! Trait ports land in WU-1. This placeholder keeps the crate building and
+//! asserts the core dependency edge is wired.
+
+/// Scaffold marker. Replaced by trait ports in WU-1.
+pub fn placeholder() -> String {
+    format!("cuvm-app over {}", cuvm_core::placeholder())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_wraps_core() {
+        assert_eq!(placeholder(), "cuvm-app over cuvm-core");
+    }
+}
