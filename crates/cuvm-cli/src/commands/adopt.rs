@@ -11,6 +11,9 @@ use cuvm_core::manifest::BundleRecord;
 /// Run `cuvm adopt --scan`: scan, adopt each candidate in place, persist to the
 /// manifest, and print the adopted handles. Idempotent: re-adopting an existing
 /// handle overwrites its record rather than duplicating it.
+///
+/// # Errors
+/// Returns an error if scanning, adoption, or manifest I/O fails.
 pub fn run_scan(installer: &dyn Installer, inventory: &dyn Inventory) -> Result<()> {
     let mut manifest = inventory.load()?;
     let candidates = installer.scan()?;

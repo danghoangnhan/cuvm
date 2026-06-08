@@ -98,8 +98,27 @@ impl Activator for UnixActivator {
         if !self.supports(sh) {
             bail!("UnixActivator does not support {sh:?}");
         }
-        // WU-6 will replace this with the real cd-hook body.
-        Ok("# cuvm hook: installed in WU-6\n".to_string())
+        let script = match sh {
+            Shell::Bash => concat!(
+                "__cuvm_autoload() {\n",
+                "  local _script\n",
+                "  _script=\"$(command cuvm env --shell bash 2>/dev/null)\" || return 0\n",
+                "  [ -n \"$_script\" ] && eval \"$_script\"\n",
+                "}\n",
+                "PROMPT_COMMAND=\"__cuvm_autoload${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n",
+            ),
+            Shell::Zsh => concat!(
+                "autoload -Uz add-zsh-hook\n",
+                "__cuvm_autoload() {\n",
+                "  local _script\n",
+                "  _script=\"$(command cuvm env --shell bash 2>/dev/null)\" || return 0\n",
+                "  [ -n \"$_script\" ] && eval \"$_script\"\n",
+                "}\n",
+                "add-zsh-hook chpwd __cuvm_autoload\n",
+            ),
+            Shell::PowerShell | Shell::Cmd => unreachable!("supports() guards this"),
+        };
+        Ok(script.to_string())
     }
 }
 

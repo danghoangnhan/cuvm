@@ -1,11 +1,35 @@
 //! cuvm subcommand implementations.
 
 pub mod adopt;
+pub mod env;
+pub mod hook;
 
 use anyhow::Result;
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 
 use cuvm_core::domain::Os;
+use cuvm_core::Shell;
+
+/// clap-facing mirror of `cuvm_core::Shell` (keeps the `ValueEnum` derive out of core).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ShellArg {
+    Bash,
+    Zsh,
+    #[value(name = "powershell")]
+    PowerShell,
+    Cmd,
+}
+
+impl From<ShellArg> for Shell {
+    fn from(s: ShellArg) -> Self {
+        match s {
+            ShellArg::Bash => Shell::Bash,
+            ShellArg::Zsh => Shell::Zsh,
+            ShellArg::PowerShell => Shell::PowerShell,
+            ShellArg::Cmd => Shell::Cmd,
+        }
+    }
+}
 
 /// Available cuvm subcommands.
 #[derive(Debug, Subcommand)]
@@ -22,6 +46,20 @@ pub enum Command {
     Uninstall {
         /// Version handle to deregister (e.g. `12.4`).
         spec: String,
+    },
+    /// Print cd-autoload hook glue for the given shell (shim-only).
+    #[command(hide = true)]
+    Hook {
+        #[arg(long, value_enum)]
+        shell: ShellArg,
+    },
+    /// Print the env-mutation script for `<spec>` (shim-only).
+    #[command(hide = true)]
+    Env {
+        /// Version spec: exact/minor/major/latest/alias/default, or empty for cwd.
+        spec: Option<String>,
+        #[arg(long, value_enum)]
+        shell: ShellArg,
     },
 }
 
@@ -48,6 +86,11 @@ impl Command {
                 inventory.deregister(&spec)?;
                 println!("deregistered {spec}");
                 Ok(())
+            }
+            Command::Hook { shell } => hook::run(shell.into()),
+            Command::Env { spec, shell } => {
+                let resolver = crate::wiring::resolver()?;
+                env::run(resolver.as_ref(), spec.as_deref(), shell.into())
             }
         }
     }

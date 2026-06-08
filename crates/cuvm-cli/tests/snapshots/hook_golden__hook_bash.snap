@@ -1,0 +1,10 @@
+---
+source: crates/cuvm-cli/tests/hook_golden.rs
+expression: "hook_stdout(\"bash\")"
+---
+__cuvm_autoload() {
+  local _script
+  _script="$(command cuvm env --shell bash 2>/dev/null)" || return 0
+  [ -n "$_script" ] && eval "$_script"
+}
+PROMPT_COMMAND="__cuvm_autoload${PROMPT_COMMAND:+;$PROMPT_COMMAND}"

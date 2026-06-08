@@ -21,6 +21,7 @@ pub struct Cli {
 impl Cli {
     /// Parse process args into the root CLI. Exits the process on
     /// `--help` / `--version` / parse error (clap's standard behavior).
+    #[must_use]
     pub fn parse_args() -> Self {
         Cli::parse()
     }

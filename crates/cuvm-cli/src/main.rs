@@ -1,10 +1,7 @@
 //! cuvm binary — composition root.
 
-mod cli;
-mod commands;
-
 use anyhow::Result;
-use cli::Cli;
+use cuvm_cli::cli::Cli;
 use cuvm_store::{FsInventory, Layout};
 
 fn main() -> Result<()> {
