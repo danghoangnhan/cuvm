@@ -1,22 +1,9 @@
-//! cuvm-core — pure domain types and logic. Zero I/O dependencies.
-//!
-//! Real types (`Version`, `Bundle`, `EnvPlan`, compat tables, ...) land in
-//! later work units. This placeholder keeps the crate building under WU-0.
+//! cuvm-core — pure domain types with ZERO I/O dependencies.
 
 #![forbid(unsafe_code)]
 
-/// Scaffold marker. Replaced by real domain types in WU-2+.
-#[must_use]
-pub fn placeholder() -> &'static str {
-    "cuvm-core"
-}
+pub mod error;
+pub mod version;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn placeholder_names_the_crate() {
-        assert_eq!(placeholder(), "cuvm-core");
-    }
-}
+pub use error::CoreError;
+pub use version::Version;
