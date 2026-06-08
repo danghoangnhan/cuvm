@@ -1,4 +1,4 @@
-# Building a CUDA Version Manager (CVM): Prior Art & Design Research
+# Building a CUDA Version Manager (CUVM): Prior Art & Design Research
 
 *Research brief — June 2026. Goal: assess existing approaches to managing multiple CUDA versions, extract the design patterns that make `nvm`/`gvm` work, and propose an architecture for an `nvm`-style CUDA version manager CLI.*
 
@@ -48,7 +48,7 @@ Two lighter tricks appear repeatedly: appending `export PATH=/usr/local/cuda-11.
 | Conda / Mamba | **Yes** (runtime) | Per-env | Yes (the env) | Win/Linux/macOS | No |
 | venv `activate` hook | No | Per-env | Yes | Both | No |
 | Windows PATH reorder (GUI) | No | Machine/user-wide | No | Windows | Admin (system) |
-| **Proposed `cvm`** | **Yes (goal)** | **Per-shell + project** | **Yes** | **Win + Linux** | **No (userland)** |
+| **Proposed `cuvm`** | **Yes (goal)** | **Per-shell + project** | **Yes** | **Win + Linux** | **No (userland)** |
 
 **Takeaway:** every existing tool covers one column well. None covers the whole row. That's the opening.
 
@@ -58,9 +58,9 @@ Two lighter tricks appear repeatedly: appending `export PATH=/usr/local/cuda-11.
 
 `nvm` is **not a binary**. It's a POSIX-compliant set of shell functions sourced into your shell from `nvm.sh`. That single design choice is what lets it mutate the *current* shell's `PATH` instantly with no `sudo` and no subprocess boundary. The pieces worth copying:
 
-- **Sourced shell function, not an executable.** A child process can't change its parent's environment, so anything that does `cvm use` must run *in* your shell. `nvm`, `rbenv`, and friends all solve this by being sourced (or by installing a shell shim/hook). This is the most important architectural decision.
-- **A versioned install root.** `nvm` keeps everything under `~/.nvm/versions/node/<version>/`. Switching = prepend the chosen version's `bin` to `PATH`. Uninstall = delete a directory. CUDA maps cleanly: `~/.cvm/versions/<cuda-version>/` mirroring NVIDIA's layout (`bin/`, `lib64/` or `lib/x64/`, `include/`).
-- **A resolution pipeline.** `nvm` resolves `lts/*`, `stable`, partial versions (`18` → newest `18.x`), and reads `.nvmrc`. `cvm` wants the same: `cvm use 12` picks the newest installed `12.x`; a `.cuda-version` file in the project root auto-selects on `cd`.
+- **Sourced shell function, not an executable.** A child process can't change its parent's environment, so anything that does `cuvm use` must run *in* your shell. `nvm`, `rbenv`, and friends all solve this by being sourced (or by installing a shell shim/hook). This is the most important architectural decision.
+- **A versioned install root.** `nvm` keeps everything under `~/.nvm/versions/node/<version>/`. Switching = prepend the chosen version's `bin` to `PATH`. Uninstall = delete a directory. CUDA maps cleanly: `~/.cuvm/versions/<cuda-version>/` mirroring NVIDIA's layout (`bin/`, `lib64/` or `lib/x64/`, `include/`).
+- **A resolution pipeline.** `nvm` resolves `lts/*`, `stable`, partial versions (`18` → newest `18.x`), and reads `.nvmrc`. `cuvm` wants the same: `cuvm use 12` picks the newest installed `12.x`; a `.cuda-version` file in the project root auto-selects on `cd`.
 - **Project pinning + shell hook.** `.nvmrc` plus an optional `cd` hook gives "right version per directory." Directly portable as `.cuda-version`.
 - **Platform split is explicit.** `nvm` (Unix, symlink/PATH) and `nvm-windows` (a separate Go program that flips a symlink at `C:\Program Files\nodejs`) are **two codebases** because the OSes differ too much to share one. Plan for the same split rather than pretending one mechanism fits both.
 - **`gvm` adds toolchain-build management** (it can compile Go from source, manage `GOROOT`/`GOPATH`, and namespace dependencies per "pkgset"). The transferable idea is **isolated, named environments**, but CUDA can't be compiled by the user, so this part maps only loosely.
@@ -69,11 +69,11 @@ Two lighter tricks appear repeatedly: appending `export PATH=/usr/local/cuda-11.
 
 ## 4. Why CUDA is harder than Node/Go (the constraints that shape the design)
 
-1. **The driver is not yours to swap.** CUDA splits into the **GPU driver** (kernel module, installed system-wide, often admin-managed) and the **CUDA Toolkit** (`nvcc`, runtime libs, headers — userland). A version manager can own the toolkit but must *respect* the driver. The saving grace is **backward compatibility**: a newer driver runs older toolkits (driver 550.x runs CUDA ≤ 12.4; 535.x runs ≤ 12.2, etc.). So the rule the tool must enforce: *you can freely switch toolkits up to the ceiling your installed driver supports.* `cvm` should detect the driver (`nvidia-smi`) and **warn before switching to a toolkit the driver can't support**, optionally hinting at the `cuda-compat` forward-compatibility package.
+1. **The driver is not yours to swap.** CUDA splits into the **GPU driver** (kernel module, installed system-wide, often admin-managed) and the **CUDA Toolkit** (`nvcc`, runtime libs, headers — userland). A version manager can own the toolkit but must *respect* the driver. The saving grace is **backward compatibility**: a newer driver runs older toolkits (driver 550.x runs CUDA ≤ 12.4; 535.x runs ≤ 12.2, etc.). So the rule the tool must enforce: *you can freely switch toolkits up to the ceiling your installed driver supports.* `cuvm` should detect the driver (`nvidia-smi`) and **warn before switching to a toolkit the driver can't support**, optionally hinting at the `cuda-compat` forward-compatibility package.
 
 2. **cuDNN and friends version independently.** cuDNN, cuBLAS, NCCL, TensorRT each have their own version and their own CUDA-compatibility matrix (cuDNN must match the toolkit's major, frequently minor, version). A toolkit-only switch is incomplete for ML users. The tool should at minimum *track and report* the cuDNN paired with each toolkit, and ideally manage cuDNN as a sub-component slotted into the version dir.
 
-3. **Frameworks pin their own CUDA.** PyTorch/TF wheels are compiled against a specific CUDA and ship their own runtime; if the system toolkit diverges by more than a minor version, kernels can fail. This means a CUDA version manager and a Python env manager overlap — `cvm` should stay in its lane (system/build toolkit + `nvcc`) and document that framework wheels are a separate axis.
+3. **Frameworks pin their own CUDA.** PyTorch/TF wheels are compiled against a specific CUDA and ship their own runtime; if the system toolkit diverges by more than a minor version, kernels can fail. This means a CUDA version manager and a Python env manager overlap — `cuvm` should stay in its lane (system/build toolkit + `nvcc`) and document that framework wheels are a separate axis.
 
 4. **Windows install model fights userland switching.** Windows toolkits install via MSI to `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\vXX.X`, set machine/user `CUDA_PATH`, and put `bin` on `PATH`. There's no `source` for `cmd.exe`/PowerShell the way there is for bash. The realistic Windows mechanism is the **`nvm-windows` model**: a small resident program that flips a `CUDA_PATH` value (and a `...\CUDA\current` junction) and relies on a persistent shell profile, or per-session `$env:` injection in PowerShell.
 
@@ -81,15 +81,15 @@ Two lighter tricks appear repeatedly: appending `export PATH=/usr/local/cuda-11.
 
 ---
 
-## 5. Proposed design for `cvm`
+## 5. Proposed design for `cuvm`
 
 ### 5.1 Philosophy
 Own the **toolkit**, respect the **driver**, track the **companion libraries**. Switch per-shell by default (never silently touch system state). Make the common case — "I already installed CUDA 11.8 and 12.4, let me flip between them per project" — one command.
 
 ### 5.2 Directory layout
 ```
-~/.cvm/                         (Linux/macOS)   %USERPROFILE%\.cvm\   (Windows)
-├── cvm.sh / cvm.ps1            # sourced shell integration
+~/.cuvm/                         (Linux/macOS)   %USERPROFILE%\.cuvm\   (Windows)
+├── cuvm.sh / cuvm.ps1            # sourced shell integration
 ├── versions/
 │   ├── 11.8/                   # mirrors NVIDIA layout: bin, lib64|lib/x64, include, nvvm
 │   ├── 12.4/
@@ -102,31 +102,31 @@ On Linux the tool can also *adopt* existing `/usr/local/cuda-*` installs by refe
 
 ### 5.3 Command surface (model it on nvm)
 ```
-cvm ls                  # installed toolkits, marking active + default
-cvm ls-remote           # toolkits available to download (parsed from NVIDIA's index)
-cvm install 12.4        # download + unpack into ~/.cvm/versions/12.4
-cvm uninstall 11.8
-cvm use 12.4            # set CUDA_HOME/PATH/LD_LIBRARY_PATH for THIS shell
-cvm use 12              # resolve to newest installed 12.x
-cvm use                 # read .cuda-version in cwd
-cvm current             # show active toolkit + driver ceiling
-cvm alias default 12.4  # persist a default for new shells
-cvm which 12.4          # print install path
-cvm doctor              # driver vs toolkit check, cuDNN pairing, PATH sanity
-cvm exec 11.8 -- nvcc … # run one command under a version without switching
+cuvm ls                  # installed toolkits, marking active + default
+cuvm ls-remote           # toolkits available to download (parsed from NVIDIA's index)
+cuvm install 12.4        # download + unpack into ~/.cuvm/versions/12.4
+cuvm uninstall 11.8
+cuvm use 12.4            # set CUDA_HOME/PATH/LD_LIBRARY_PATH for THIS shell
+cuvm use 12              # resolve to newest installed 12.x
+cuvm use                 # read .cuda-version in cwd
+cuvm current             # show active toolkit + driver ceiling
+cuvm alias default 12.4  # persist a default for new shells
+cuvm which 12.4          # print install path
+cuvm doctor              # driver vs toolkit check, cuDNN pairing, PATH sanity
+cuvm exec 11.8 -- nvcc … # run one command under a version without switching
 ```
 
 ### 5.4 The switching mechanism (per platform)
-- **Linux/macOS:** ship `cvm.sh`, sourced from `~/.bashrc`/`~/.zshrc`. `cvm use X` exports `CUDA_HOME`, prepends `…/bin` to `PATH`, prepends `…/lib64` to `LD_LIBRARY_PATH`, and *removes any previously-injected cvm paths first* (mirror nvm's `nvm_change_path` cleanup so versions don't stack). A `cd` hook reads `.cuda-version`.
+- **Linux/macOS:** ship `cuvm.sh`, sourced from `~/.bashrc`/`~/.zshrc`. `cuvm use X` exports `CUDA_HOME`, prepends `…/bin` to `PATH`, prepends `…/lib64` to `LD_LIBRARY_PATH`, and *removes any previously-injected cuvm paths first* (mirror nvm's `nvm_change_path` cleanup so versions don't stack). A `cd` hook reads `.cuda-version`.
 - **Windows:** a resident helper (PowerShell module + optional small binary) that, per session, sets `$env:CUDA_PATH`, `$env:CUDA_HOME`, and reorders `$env:Path`. For "persist as default," update the *user* env vars (never require admin) and flip a `…\CUDA\current` junction so tools hard-coded to a fixed path still resolve.
 
 ### 5.5 The `.cuda-version` file
-A one-line file (`12.4`, or `12` for "newest 12.x") committed to the repo. On `cd` (or `cvm use` with no arg) the tool resolves and activates it, warning if that version isn't installed and offering `cvm install`. Directly analogous to `.nvmrc`.
+A one-line file (`12.4`, or `12` for "newest 12.x") committed to the repo. On `cd` (or `cuvm use` with no arg) the tool resolves and activates it, warning if that version isn't installed and offering `cuvm install`. Directly analogous to `.nvmrc`.
 
 ### 5.6 Safety rails (the CUDA-specific value-add)
 - **Driver ceiling check:** read `nvidia-smi` driver version, refuse-with-warning to switch to a toolkit above what the driver supports, and mention `cuda-compat` as the escape hatch.
-- **`cvm doctor`:** verifies `nvcc` matches `CUDA_HOME`, that `LD_LIBRARY_PATH`/`Path` has no stale or duplicate CUDA entries, and that the paired cuDNN (if managed) matches the toolkit major/minor.
-- **cuDNN awareness:** at minimum record which cuDNN sits in each version dir and surface it in `cvm ls`; stretch goal is `cvm cudnn install 8.9 --for 12.4`.
+- **`cuvm doctor`:** verifies `nvcc` matches `CUDA_HOME`, that `LD_LIBRARY_PATH`/`Path` has no stale or duplicate CUDA entries, and that the paired cuDNN (if managed) matches the toolkit major/minor.
+- **cuDNN awareness:** at minimum record which cuDNN sits in each version dir and surface it in `cuvm ls`; stretch goal is `cuvm cudnn install 8.9 --for 12.4`.
 
 ### 5.7 Implementation language
 A small **Go or Rust** core (for `ls-remote`, downloading, archive extraction, JSON state, Windows env handling) plus thin sourced shell shims is the pragmatic split — exactly the `nvm-windows`/`rbenv` pattern. Pure bash (à la `nvm`) is simplest on Unix but can't serve Windows, which is half your likely audience.
@@ -136,7 +136,7 @@ A small **Go or Rust** core (for `ls-remote`, downloading, archive extraction, J
 ## 6. Recommended roadmap
 
 1. **MVP — switch only, Linux + WSL first.** Discover existing toolkits, `ls`/`use`/`current`/`alias`, `.cuda-version`, `doctor` with the driver-ceiling check. No downloading yet. This is `switch-cuda` plus pinning plus safety — shippable and immediately useful, and it's how nvm built trust before it automated installs.
-2. **Add `install`/`ls-remote`.** Parse NVIDIA's download index, fetch and unpack into `~/.cvm/versions`. Hardest part; do it after switching is solid.
+2. **Add `install`/`ls-remote`.** Parse NVIDIA's download index, fetch and unpack into `~/.cuvm/versions`. Hardest part; do it after switching is solid.
 3. **Windows support** as a parallel track (separate shell integration, `CUDA_PATH` + junction model).
 4. **cuDNN / companion-library management** as the differentiator over every existing tool.
 
@@ -144,9 +144,9 @@ A small **Go or Rust** core (for `ls-remote`, downloading, archive extraction, J
 
 ## 7. Open questions to decide before coding
 - **Scope of "version":** toolkit only, or toolkit + cuDNN + NCCL as a bundle? (Bundling is the killer feature but multiplies complexity.)
-- **Download legality/automation:** cuDNN historically required a login; toolkits are freely downloadable. Decide whether `cvm` downloads cuDNN or only adopts user-supplied archives.
-- **Relationship to Conda/uv/pixi:** position `cvm` as the *system/build* toolkit manager (for `nvcc` and native CUDA projects), explicitly complementary to per-Python-env runtimes, to avoid reinventing Conda.
-- **Name collision:** "cvm" is taken several times on GitHub (CMake VM, C/C++ VM, Composer VM, Cortex VM). Consider `cudavm`, `cudaenv`, `nvcc-vm`, or `cudaup` (à la `rustup`).
+- **Download legality/automation:** cuDNN historically required a login; toolkits are freely downloadable. Decide whether `cuvm` downloads cuDNN or only adopts user-supplied archives.
+- **Relationship to Conda/uv/pixi:** position `cuvm` as the *system/build* toolkit manager (for `nvcc` and native CUDA projects), explicitly complementary to per-Python-env runtimes, to avoid reinventing Conda.
+- **Name collision:** "cuvm" is taken several times on GitHub (CMake VM, C/C++ VM, Composer VM, Cortex VM). Consider `cudavm`, `cudaenv`, `nvcc-vm`, or `cudaup` (à la `rustup`).
 
 ---
 
