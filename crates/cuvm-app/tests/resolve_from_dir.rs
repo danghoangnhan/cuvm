@@ -77,5 +77,10 @@ fn pin_to_uninstalled_version_is_not_installed() {
     tmp.child(".cuda-version").write_str("11.8").unwrap();
     let r = resolver(&["12.4.1"], &[]);
     let err = r.resolve_from_dir(tmp.path()).unwrap_err();
-    assert_eq!(err, CoreErr::NotInstalled { spec: "11.8".into() });
+    assert_eq!(
+        err,
+        CoreErr::NotInstalled {
+            spec: "11.8".into()
+        }
+    );
 }

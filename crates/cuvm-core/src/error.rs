@@ -30,9 +30,7 @@ pub enum CoreErr {
     #[error("invalid version string {0:?}: {1}")]
     BadVersion(String, &'static str),
 
-    #[error(
-        "no installed toolkit matches {spec:?}; run `cuvm install {spec}` to install it"
-    )]
+    #[error("no installed toolkit matches {spec:?}; run `cuvm install {spec}` to install it")]
     NotInstalled { spec: String },
 
     #[error("alias cycle detected while expanding {0:?}")]

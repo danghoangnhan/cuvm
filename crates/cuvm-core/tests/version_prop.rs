@@ -3,8 +3,13 @@ use proptest::prelude::*;
 
 /// Generate a dotted numeric string of 1..=5 components, each 0..=9999.
 fn version_string() -> impl Strategy<Value = String> {
-    prop::collection::vec(0u32..10_000, 1..=5)
-        .prop_map(|parts| parts.iter().map(|n| n.to_string()).collect::<Vec<_>>().join("."))
+    prop::collection::vec(0u32..10_000, 1..=5).prop_map(|parts| {
+        parts
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(".")
+    })
 }
 
 proptest! {

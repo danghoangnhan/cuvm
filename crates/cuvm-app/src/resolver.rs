@@ -8,7 +8,7 @@ use std::path::Path;
 
 use cuvm_core::{Bundle, CoreErr, Pin, Result, Version};
 
-use crate::ports::{Resolved, ResolveVia, Resolver};
+use crate::ports::{ResolveVia, Resolved, Resolver};
 
 /// Spec resolution via an in-memory inventory (no network, minimal fs).
 ///
@@ -48,9 +48,7 @@ impl MemResolver {
     fn newest_with_prefix(&self, prefix: &[u32]) -> Option<Version> {
         self.installed_versions()
             .into_iter()
-            .filter(|v| {
-                v.fields.len() >= prefix.len() && v.fields[..prefix.len()] == *prefix
-            })
+            .filter(|v| v.fields.len() >= prefix.len() && v.fields[..prefix.len()] == *prefix)
             .max()
     }
 }
@@ -59,13 +57,11 @@ impl Resolver for MemResolver {
     fn resolve(&self, spec: &str) -> Result<Resolved> {
         // 1. Literal "latest" — global maximum.
         if spec == "latest" {
-            let v = self
-                .installed_versions()
-                .into_iter()
-                .max()
-                .ok_or_else(|| CoreErr::NotInstalled {
+            let v = self.installed_versions().into_iter().max().ok_or_else(|| {
+                CoreErr::NotInstalled {
                     spec: spec.to_string(),
-                })?;
+                }
+            })?;
             let bundle = self.bundle_for(&v).expect("version came from inventory");
             return Ok(Resolved {
                 bundle,
@@ -85,8 +81,9 @@ impl Resolver for MemResolver {
         }
 
         // 3. Version spec by field count.
-        let parsed = Version::parse(spec)
-            .map_err(|_| CoreErr::NotInstalled { spec: spec.to_string() })?;
+        let parsed = Version::parse(spec).map_err(|_| CoreErr::NotInstalled {
+            spec: spec.to_string(),
+        })?;
         let prefix = parsed.fields.as_slice();
         let via = match prefix.len() {
             1 => ResolveVia::Major,
@@ -96,9 +93,7 @@ impl Resolver for MemResolver {
         // Exact (≥3 fields): require numeric equality.
         // Minor/major: newest installed version with this prefix.
         let chosen = if via == ResolveVia::Exact {
-            self.installed_versions()
-                .into_iter()
-                .find(|v| *v == parsed)
+            self.installed_versions().into_iter().find(|v| *v == parsed)
         } else {
             self.newest_with_prefix(prefix)
         };
@@ -145,7 +140,7 @@ impl Resolver for MemResolver {
             match self.aliases.get(&cur) {
                 Some(next) => {
                     seen.push(cur.clone());
-                    cur = next.clone();
+                    cur.clone_from(next);
                 }
                 None => return Ok(cur), // terminal: a non-alias spec (version/latest)
             }
@@ -261,7 +256,12 @@ mod tests {
     fn missing_version_returns_typed_not_installed() {
         let r = resolver(&["12.4.1"], &[]);
         let err = r.resolve("11.8").unwrap_err();
-        assert_eq!(err, CoreErr::NotInstalled { spec: "11.8".into() });
+        assert_eq!(
+            err,
+            CoreErr::NotInstalled {
+                spec: "11.8".into()
+            }
+        );
         // message offers the install path.
         assert!(err.to_string().contains("cuvm install 11.8"));
     }
@@ -270,7 +270,12 @@ mod tests {
     fn exact_spec_not_installed_is_not_installed() {
         let r = resolver(&["12.4.1"], &[]);
         let err = r.resolve("12.4.2").unwrap_err();
-        assert_eq!(err, CoreErr::NotInstalled { spec: "12.4.2".into() });
+        assert_eq!(
+            err,
+            CoreErr::NotInstalled {
+                spec: "12.4.2".into()
+            }
+        );
     }
 
     // ---- Task 2.5: alias tests ---------------------------------------------
@@ -330,7 +335,9 @@ mod tests {
         // a bogus non-version name with no alias -> NotInstalled.
         assert_eq!(
             r.resolve("nope").unwrap_err(),
-            CoreErr::NotInstalled { spec: "nope".into() }
+            CoreErr::NotInstalled {
+                spec: "nope".into()
+            }
         );
     }
 }
