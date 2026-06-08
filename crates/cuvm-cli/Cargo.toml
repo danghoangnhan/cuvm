@@ -9,6 +9,10 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[lib]
+name = "cuvm_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "cuvm"
 path = "src/main.rs"
