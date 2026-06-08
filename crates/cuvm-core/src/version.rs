@@ -42,6 +42,18 @@ impl Version {
     pub fn major(&self) -> u32 {
         self.fields.first().copied().unwrap_or(0)
     }
+
+    /// Canonical field view with trailing zeros trimmed — basis for `Eq`/`Hash` so that
+    /// `12.4`, `12.4.0`, and `12.4.0.0` are treated as the same value.
+    ///
+    /// At least one element is always kept (e.g. `[0, 0, 0]` → `[0]`).
+    fn canonical(&self) -> &[u32] {
+        let mut end = self.fields.len();
+        while end > 1 && self.fields[end - 1] == 0 {
+            end -= 1;
+        }
+        &self.fields[..end]
+    }
 }
 
 impl PartialEq for Version {
@@ -50,6 +62,15 @@ impl PartialEq for Version {
     }
 }
 impl Eq for Version {}
+
+impl std::hash::Hash for Version {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Hash only the canonical (trailing-zero-trimmed) fields so that
+        // versions that compare equal (e.g. 12.4 == 12.4.0) also hash equal,
+        // satisfying the Eq/Hash contract. `raw` is intentionally excluded.
+        self.canonical().hash(state);
+    }
+}
 
 impl PartialOrd for Version {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -147,5 +168,24 @@ mod tests {
     #[test]
     fn display_renders_raw() {
         assert_eq!(Version::parse("12.4.1").unwrap().to_string(), "12.4.1");
+    }
+
+    fn v(s: &str) -> Version {
+        Version::parse(s).expect("valid version")
+    }
+
+    #[test]
+    fn ord_eq_and_hash_consistent() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(v("12.4"));
+        assert!(set.contains(&v("12.4.0")));
+    }
+
+    #[test]
+    fn sort_picks_newest_patch_last() {
+        let mut xs = [v("12.4.1"), v("12.4.0"), v("12.4.10"), v("12.4.2")];
+        xs.sort();
+        assert_eq!(xs.last().unwrap().raw, "12.4.10");
     }
 }
