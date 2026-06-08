@@ -30,7 +30,10 @@ pub fn new_activator(os: Os) -> Box<dyn Activator> {
 /// Runtime factory: select the Installer backend by `Os` value.
 #[must_use]
 pub fn new_installer(os: Os) -> Box<dyn Installer> {
-    let platform = Platform { os, arch: Arch::X86_64 };
+    let platform = Platform {
+        os,
+        arch: Arch::X86_64,
+    };
     match os {
         Os::Linux => Box::new(UnixInstaller::new(platform)),
         Os::Windows => Box::new(WindowsInstaller::new()),

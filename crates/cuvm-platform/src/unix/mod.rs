@@ -21,13 +21,19 @@ impl UnixInstaller {
     /// Production constructor: scans `/usr/local`.
     #[must_use]
     pub fn new(platform: Platform) -> Self {
-        Self { scan_root: PathBuf::from("/usr/local"), platform }
+        Self {
+            scan_root: PathBuf::from("/usr/local"),
+            platform,
+        }
     }
 
     /// Test/override constructor: scans an arbitrary root (e.g. an `assert_fs` tree).
     #[must_use]
     pub fn with_scan_root(scan_root: PathBuf, platform: Platform) -> Self {
-        Self { scan_root, platform }
+        Self {
+            scan_root,
+            platform,
+        }
     }
 }
 
@@ -104,7 +110,10 @@ mod tests {
 
     #[test]
     fn unix_installer_methods_are_not_implemented() {
-        let platform = cuvm_core::Platform { os: Os::Linux, arch: Arch::X86_64 };
+        let platform = cuvm_core::Platform {
+            os: Os::Linux,
+            arch: Arch::X86_64,
+        };
         let i = UnixInstaller::new(platform);
         let err = i.smoke_test(std::path::Path::new("/nope")).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("not implemented"));

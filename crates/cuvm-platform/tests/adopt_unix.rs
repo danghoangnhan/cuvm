@@ -10,7 +10,10 @@ use cuvm_core::domain::{Arch, Os, Platform};
 use cuvm_platform::unix::UnixInstaller;
 
 fn linux() -> Platform {
-    Platform { os: Os::Linux, arch: Arch::X86_64 }
+    Platform {
+        os: Os::Linux,
+        arch: Arch::X86_64,
+    }
 }
 
 /// Build a fake `/usr/local`-style tree with two valid toolkits.
@@ -20,8 +23,12 @@ fn fixture_two_valid() -> TempDir {
     for ver in ["12.4", "11.8"] {
         let base = format!("cuda-{ver}");
         root.child(format!("{base}/bin/nvcc")).touch().unwrap();
-        root.child(format!("{base}/bin/nvcc.profile")).touch().unwrap();
-        root.child(format!("{base}/lib64/libcudart.so")).touch().unwrap();
+        root.child(format!("{base}/bin/nvcc.profile"))
+            .touch()
+            .unwrap();
+        root.child(format!("{base}/lib64/libcudart.so"))
+            .touch()
+            .unwrap();
     }
     root
 }
@@ -81,7 +88,11 @@ fn scan_resolves_cuda_symlink_target_and_dedups() {
     let installer = UnixInstaller::with_scan_root(root.path().to_path_buf(), linux());
     let found = installer.scan().unwrap();
     // The symlink resolves to the same dir as cuda-12.4, so we get exactly ONE candidate.
-    assert_eq!(found.len(), 1, "symlink target must be deduped against cuda-12.4");
+    assert_eq!(
+        found.len(),
+        1,
+        "symlink target must be deduped against cuda-12.4"
+    );
     assert_eq!(found[0].version_hint.as_deref(), Some("12.4"));
 }
 
@@ -112,7 +123,10 @@ fn adopt_builds_in_place_bundle_without_touching_dir() {
     // Recorded VERBATIM, in place — same path the scan found.
     assert_eq!(bundle.toolkit.root, root.path().join("cuda-12.4"));
     // Native /usr/local layout uses lib64 -> no symlink fix required.
-    assert!(bundle.toolkit.has_lib64, "adopted installs are native lib64");
+    assert!(
+        bundle.toolkit.has_lib64,
+        "adopted installs are native lib64"
+    );
     assert_eq!(bundle.toolkit.checksum, None);
     assert!(bundle.cudnn.is_none());
     assert!(bundle.extra.is_empty());
@@ -120,8 +134,10 @@ fn adopt_builds_in_place_bundle_without_touching_dir() {
 
     // ADR-005: adopt must NOT mutate the external tree.
     tk.child("bin/nvcc").assert(predicates::path::is_file());
-    tk.child("bin/nvcc.profile").assert(predicates::path::is_file());
-    tk.child("lib64/libcudart.so").assert(predicates::path::is_file());
+    tk.child("bin/nvcc.profile")
+        .assert(predicates::path::is_file());
+    tk.child("lib64/libcudart.so")
+        .assert(predicates::path::is_file());
 }
 
 #[test]
@@ -134,7 +150,10 @@ fn adopt_rejects_a_root_that_is_not_a_valid_toolkit() {
         root: root.path().join("cuda-9.9"),
     };
     let installer = UnixInstaller::with_scan_root(root.path().to_path_buf(), linux());
-    assert!(installer.adopt(&candidate).is_err(), "invalid root must not adopt");
+    assert!(
+        installer.adopt(&candidate).is_err(),
+        "invalid root must not adopt"
+    );
 }
 
 #[test]
@@ -145,7 +164,9 @@ fn adopt_path_is_relocatable_native_lib64_no_rewrite() {
     tk.child("bin/nvcc").touch().unwrap();
     // nvcc.profile carries the self-locating relative TOP marker (native install).
     let profile = tk.child("bin/nvcc.profile");
-    profile.write_str("TOP = $(_HERE_)/..\nLIBRARIES = -L$(TOP)/lib64\n").unwrap();
+    profile
+        .write_str("TOP = $(_HERE_)/..\nLIBRARIES = -L$(TOP)/lib64\n")
+        .unwrap();
     tk.child("lib64/libcudart.so").touch().unwrap(); // native lib64, not lib
 
     let installer = UnixInstaller::with_scan_root(root.path().to_path_buf(), linux());
@@ -157,7 +178,10 @@ fn adopt_path_is_relocatable_native_lib64_no_rewrite() {
     // No lib64->lib fix needed: native lib64 present, has_lib64 == true.
     assert!(bundle.toolkit.has_lib64);
     assert!(tk.child("lib64/libcudart.so").path().is_file());
-    assert!(!tk.child("lib").path().exists(), "adopt must not create a lib symlink");
+    assert!(
+        !tk.child("lib").path().exists(),
+        "adopt must not create a lib symlink"
+    );
     // nvcc.profile untouched — relocatability is intrinsic, adopt rewrites nothing.
     let after = fs::read_to_string(tk.child("bin/nvcc.profile").path()).unwrap();
     assert_eq!(before, after);

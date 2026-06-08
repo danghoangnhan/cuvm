@@ -15,9 +15,7 @@ use cuvm_core::domain::{Bundle, Platform, Source, Toolkit};
 /// BOTH `bin/nvcc` and `bin/nvcc.profile`. (`nvcc.profile` is what makes the tree
 /// self-locating via `$(_HERE_)`, so its presence is the relocatability signal.)
 pub(crate) fn is_valid_toolkit(root: &Path) -> bool {
-    root.is_dir()
-        && root.join("bin/nvcc").is_file()
-        && root.join("bin/nvcc.profile").is_file()
+    root.is_dir() && root.join("bin/nvcc").is_file() && root.join("bin/nvcc.profile").is_file()
 }
 
 /// Enumerate `cuda-X.Y` candidates directly under `scan_root`, plus the resolved
@@ -107,5 +105,9 @@ pub(crate) fn adopt_candidate(c: &Candidate) -> Result<Bundle> {
         installed_at: OffsetDateTime::now_utc(),
         checksum: None, // adopted installs can't be checksum-guaranteed
     };
-    Ok(Bundle { toolkit, cudnn: None, extra: Vec::new() })
+    Ok(Bundle {
+        toolkit,
+        cudnn: None,
+        extra: Vec::new(),
+    })
 }
