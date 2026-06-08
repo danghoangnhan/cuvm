@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use cuvm_app::{AcquirePlan, Activator, ArtifactKind, Cached, Candidate, Installer};
-use cuvm_core::{Bundle, Platform, Shell, VersionMeta};
+use cuvm_app::{AcquirePlan, Activator, ArtifactKind, Cached, Installer};
+use cuvm_core::{Bundle, Candidate, Platform, Shell, VersionMeta};
 
 use crate::not_impl;
 

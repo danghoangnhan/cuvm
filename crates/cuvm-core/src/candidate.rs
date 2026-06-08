@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use crate::domain::Platform;
+use crate::domain::{Platform, Source};
 use crate::version::Version;
 
 /// A discovered, validated-on-the-platform-side toolkit directory awaiting adoption.
@@ -15,6 +15,8 @@ pub struct Candidate {
     pub root: PathBuf,
     /// Target platform of the host doing the adoption.
     pub platform: Platform,
+    /// How this candidate came to be known (e.g. `Source::Adopted` for scanned installs).
+    pub source: Source,
 }
 
 impl Candidate {
@@ -30,8 +32,16 @@ impl Candidate {
     /// version part fails to parse. The bare `cuda` symlink name returns `None`
     /// here on purpose — the symlink is resolved to its target dir before this is
     /// called (see `cuvm-platform`'s scan).
+    ///
+    /// The caller is responsible for supplying `source`; scanned candidates should
+    /// pass `Source::Adopted`.
     #[must_use]
-    pub fn from_dir_name(name: &str, root: PathBuf, platform: Platform) -> Option<Candidate> {
+    pub fn from_dir_name(
+        name: &str,
+        root: PathBuf,
+        platform: Platform,
+        source: Source,
+    ) -> Option<Candidate> {
         let rest = name.strip_prefix("cuda-")?;
         if rest.is_empty() {
             return None;
@@ -41,6 +51,7 @@ impl Candidate {
             version,
             root,
             platform,
+            source,
         })
     }
 }
@@ -48,7 +59,7 @@ impl Candidate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Arch, Os, Platform};
+    use crate::domain::{Arch, Os, Platform, Source};
     use crate::version::Version;
     use std::path::PathBuf;
 
@@ -61,29 +72,64 @@ mod tests {
 
     #[test]
     fn from_dir_name_parses_minor_version() {
-        let c =
-            Candidate::from_dir_name("cuda-12.4", PathBuf::from("/usr/local/cuda-12.4"), linux())
-                .expect("cuda-12.4 should parse");
+        let c = Candidate::from_dir_name(
+            "cuda-12.4",
+            PathBuf::from("/usr/local/cuda-12.4"),
+            linux(),
+            Source::Adopted,
+        )
+        .expect("cuda-12.4 should parse");
         assert_eq!(c.version, Version::parse("12.4").unwrap());
         assert_eq!(c.root, PathBuf::from("/usr/local/cuda-12.4"));
         assert_eq!(c.handle(), "12.4");
+        assert_eq!(c.source, Source::Adopted);
     }
 
     #[test]
     fn from_dir_name_parses_patch_version() {
-        let c = Candidate::from_dir_name("cuda-12.4.1", PathBuf::from("/x/cuda-12.4.1"), linux())
-            .expect("cuda-12.4.1 should parse");
+        let c = Candidate::from_dir_name(
+            "cuda-12.4.1",
+            PathBuf::from("/x/cuda-12.4.1"),
+            linux(),
+            Source::Adopted,
+        )
+        .expect("cuda-12.4.1 should parse");
         assert_eq!(c.version, Version::parse("12.4.1").unwrap());
     }
 
     #[test]
     fn from_dir_name_rejects_non_cuda_dirs() {
+        assert!(Candidate::from_dir_name(
+            "cuda",
+            PathBuf::from("/usr/local/cuda"),
+            linux(),
+            Source::Adopted
+        )
+        .is_none());
+        assert!(Candidate::from_dir_name(
+            "cudnn-9.2",
+            PathBuf::from("/x"),
+            linux(),
+            Source::Adopted
+        )
+        .is_none());
         assert!(
-            Candidate::from_dir_name("cuda", PathBuf::from("/usr/local/cuda"), linux()).is_none()
+            Candidate::from_dir_name("cuda-", PathBuf::from("/x"), linux(), Source::Adopted)
+                .is_none()
         );
-        assert!(Candidate::from_dir_name("cudnn-9.2", PathBuf::from("/x"), linux()).is_none());
-        assert!(Candidate::from_dir_name("cuda-", PathBuf::from("/x"), linux()).is_none());
-        assert!(Candidate::from_dir_name("cuda-banana", PathBuf::from("/x"), linux()).is_none());
-        assert!(Candidate::from_dir_name("notcuda-12.4", PathBuf::from("/x"), linux()).is_none());
+        assert!(Candidate::from_dir_name(
+            "cuda-banana",
+            PathBuf::from("/x"),
+            linux(),
+            Source::Adopted
+        )
+        .is_none());
+        assert!(Candidate::from_dir_name(
+            "notcuda-12.4",
+            PathBuf::from("/x"),
+            linux(),
+            Source::Adopted
+        )
+        .is_none());
     }
 }

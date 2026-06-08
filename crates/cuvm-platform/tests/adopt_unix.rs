@@ -6,7 +6,7 @@ use assert_fs::prelude::*;
 use assert_fs::TempDir;
 
 use cuvm_app::Installer;
-use cuvm_core::domain::{Arch, Os, Platform};
+use cuvm_core::domain::{Arch, Os, Platform, Source};
 use cuvm_platform::unix::UnixInstaller;
 
 fn linux() -> Platform {
@@ -39,17 +39,10 @@ fn scan_root_is_configurable_and_finds_two_valid_toolkits() {
     let installer = UnixInstaller::with_scan_root(root.path().to_path_buf(), linux());
 
     let mut found = installer.scan().expect("scan should succeed");
-    found.sort_by(|a, b| {
-        let av = a.version_hint.as_deref().unwrap_or("");
-        let bv = b.version_hint.as_deref().unwrap_or("");
-        av.cmp(bv)
-    });
+    found.sort_by(|a, b| a.version.cmp(&b.version));
 
-    let versions: Vec<String> = found
-        .iter()
-        .map(|c| c.version_hint.clone().unwrap_or_default())
-        .collect();
-    assert_eq!(versions, vec!["11.8".to_string(), "12.4".to_string()]);
+    let versions: Vec<&str> = found.iter().map(|c| c.version.raw.as_str()).collect();
+    assert_eq!(versions, vec!["11.8", "12.4"]);
     // Roots are recorded verbatim under the scan root (adopt-in-place).
     assert_eq!(found[1].root, root.path().join("cuda-12.4"));
 }
@@ -69,11 +62,8 @@ fn scan_rejects_dirs_missing_nvcc_or_profile() {
 
     let installer = UnixInstaller::with_scan_root(root.path().to_path_buf(), linux());
     let found = installer.scan().unwrap();
-    let versions: Vec<String> = found
-        .iter()
-        .map(|c| c.version_hint.clone().unwrap_or_default())
-        .collect();
-    assert_eq!(versions, vec!["12.3".to_string()]);
+    let versions: Vec<&str> = found.iter().map(|c| c.version.raw.as_str()).collect();
+    assert_eq!(versions, vec!["12.3"]);
 }
 
 #[test]
@@ -93,7 +83,7 @@ fn scan_resolves_cuda_symlink_target_and_dedups() {
         1,
         "symlink target must be deduped against cuda-12.4"
     );
-    assert_eq!(found[0].version_hint.as_deref(), Some("12.4"));
+    assert_eq!(found[0].version.raw, "12.4");
 }
 
 #[test]
@@ -102,8 +92,6 @@ fn scan_returns_empty_when_root_missing() {
         UnixInstaller::with_scan_root(std::path::PathBuf::from("/nonexistent/cuvm-scan"), linux());
     assert!(installer.scan().unwrap().is_empty());
 }
-
-use cuvm_core::domain::Source;
 
 #[test]
 fn adopt_builds_in_place_bundle_without_touching_dir() {
@@ -116,12 +104,18 @@ fn adopt_builds_in_place_bundle_without_touching_dir() {
     let installer = UnixInstaller::with_scan_root(root.path().to_path_buf(), linux());
     let candidate = installer.scan().unwrap().into_iter().next().unwrap();
 
+    // Scanned candidates carry the correct platform and source.
+    assert_eq!(candidate.platform, linux());
+    assert_eq!(candidate.source, Source::Adopted);
+
     let bundle = installer.adopt(&candidate).expect("adopt should succeed");
 
     assert_eq!(bundle.toolkit.version.raw, "12.4");
     assert_eq!(bundle.toolkit.source, Source::Adopted);
     // Recorded VERBATIM, in place — same path the scan found.
     assert_eq!(bundle.toolkit.root, root.path().join("cuda-12.4"));
+    // Platform comes from the candidate, not current_platform().
+    assert_eq!(bundle.toolkit.platform, linux());
     // Native /usr/local layout uses lib64 -> no symlink fix required.
     assert!(
         bundle.toolkit.has_lib64,
@@ -145,9 +139,11 @@ fn adopt_rejects_a_root_that_is_not_a_valid_toolkit() {
     let root = TempDir::new().unwrap();
     root.child("cuda-9.9/.keep").touch().unwrap(); // no bin/nvcc
 
-    let candidate = cuvm_app::Candidate {
-        version_hint: Some("9.9".to_string()),
+    let candidate = cuvm_core::Candidate {
+        version: cuvm_core::Version::parse("9.9").unwrap(),
         root: root.path().join("cuda-9.9"),
+        platform: linux(),
+        source: Source::Adopted,
     };
     let installer = UnixInstaller::with_scan_root(root.path().to_path_buf(), linux());
     assert!(

@@ -77,12 +77,9 @@ pub enum ArtifactKind {
     Cudnn,
 }
 
-/// A scan candidate (existing on-disk install). Fields land in WU-4/WU-9.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Candidate {
-    pub root: PathBuf,
-    pub version_hint: Option<String>,
-}
+// Re-export the canonical Candidate from cuvm-core so WU-9 and other crates can
+// reach it as `cuvm_app::Candidate`.
+pub use cuvm_core::Candidate;
 
 /// Which components to request from the registry. Expanded in WU-10.
 #[derive(Debug, Clone, PartialEq, Eq)]

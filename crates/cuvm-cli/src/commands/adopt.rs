@@ -37,8 +37,9 @@ pub fn run_scan(installer: &dyn Installer, inventory: &dyn Inventory) -> Result<
     }
     if candidates.is_empty() {
         println!("no adoptable CUDA toolkits found");
+    } else {
+        inventory.save(&manifest)?;
     }
-    inventory.save(&manifest)?;
     Ok(())
 }
 

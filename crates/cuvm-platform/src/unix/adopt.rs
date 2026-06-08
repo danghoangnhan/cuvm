@@ -7,8 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Result};
 use time::OffsetDateTime;
 
-use cuvm_app::Candidate;
-use cuvm_core::candidate::Candidate as CoreCandidate;
+use cuvm_core::candidate::Candidate;
 use cuvm_core::domain::{Bundle, Platform, Source, Toolkit};
 
 /// A directory is a real, adoptable toolkit iff it is a directory containing
@@ -66,14 +65,10 @@ fn consider_entry(
     if seen.contains(&key) {
         return;
     }
-    // Parse the version from the dir name using the core type.
-    if let Some(core_c) = CoreCandidate::from_dir_name(name, path.clone(), platform) {
+    // Parse the version from the dir name; scanned candidates are existing installs.
+    if let Some(c) = Candidate::from_dir_name(name, path, platform, Source::Adopted) {
         seen.push(key);
-        // Convert to the ports Candidate (version stored in version_hint).
-        out.push(Candidate {
-            root: path,
-            version_hint: Some(core_c.version.raw),
-        });
+        out.push(c);
     }
 }
 
@@ -86,20 +81,11 @@ pub(crate) fn adopt_candidate(c: &Candidate) -> Result<Bundle> {
             c.root.display()
         );
     }
-    let version_str = c.version_hint.as_deref().unwrap_or_default();
-    let version = cuvm_core::Version::parse(version_str).map_err(|e| {
-        anyhow::anyhow!(
-            "cannot parse version {:?} for {}: {e}",
-            version_str,
-            c.root.display()
-        )
-    })?;
-    let platform = cuvm_core::current_platform();
     let toolkit = Toolkit {
-        version,
-        source: Source::Adopted,
+        version: c.version.clone(),
+        source: c.source,
         root: c.root.clone(),
-        platform,
+        platform: c.platform,
         components: Vec::new(), // unknown for an adopted tree
         has_lib64: true,        // native /usr/local layout; no lib64->lib fix
         installed_at: OffsetDateTime::now_utc(),

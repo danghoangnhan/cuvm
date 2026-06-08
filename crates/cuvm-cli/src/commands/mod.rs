@@ -32,9 +32,16 @@ impl Command {
     /// Propagates any I/O or logic error from the subcommand handler.
     pub fn run(self, inventory: &dyn cuvm_app::Inventory) -> Result<()> {
         match self {
-            Command::Adopt { scan: _ } => {
-                let installer = build_installer();
-                adopt::run_scan(installer.as_ref(), inventory)
+            Command::Adopt { scan } => {
+                if scan {
+                    let installer = build_installer();
+                    adopt::run_scan(installer.as_ref(), inventory)
+                } else {
+                    eprintln!(
+                        "cuvm adopt: pass --scan to discover and register existing system CUDA installs"
+                    );
+                    Ok(())
+                }
             }
             Command::Ls => list(inventory),
             Command::Uninstall { spec } => {
