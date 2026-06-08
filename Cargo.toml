@@ -35,7 +35,7 @@ sha2 = "0.10"
 tar = "0.4"
 lzma-rs = "0.3"
 zip = "2.2"
-time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
 insta = "1.40"
 assert_cmd = "2.0"
 predicates = "3.1"

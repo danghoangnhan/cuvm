@@ -11,3 +11,5 @@ workspace = true
 
 [dependencies]
 cuvm-core = { path = "../cuvm-core" }
+cuvm-app = { path = "../cuvm-app" }
+anyhow = { workspace = true }
