@@ -13,3 +13,9 @@ workspace = true
 cuvm-core = { path = "../cuvm-core" }
 cuvm-app = { path = "../cuvm-app" }
 anyhow = { workspace = true }
+time = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+assert_fs = { workspace = true }
+tempfile = { workspace = true }
+predicates = { workspace = true }

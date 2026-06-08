@@ -7,7 +7,7 @@ pub mod unix;
 pub mod windows;
 
 use cuvm_app::{Activator, Installer};
-use cuvm_core::Os;
+use cuvm_core::{Arch, Os, Platform};
 
 use crate::unix::{UnixActivator, UnixInstaller};
 use crate::windows::{WindowsActivator, WindowsInstaller};
@@ -30,8 +30,9 @@ pub fn new_activator(os: Os) -> Box<dyn Activator> {
 /// Runtime factory: select the Installer backend by `Os` value.
 #[must_use]
 pub fn new_installer(os: Os) -> Box<dyn Installer> {
+    let platform = Platform { os, arch: Arch::X86_64 };
     match os {
-        Os::Linux => Box::new(UnixInstaller::new()),
+        Os::Linux => Box::new(UnixInstaller::new(platform)),
         Os::Windows => Box::new(WindowsInstaller::new()),
     }
 }
@@ -76,9 +77,9 @@ mod tests {
 
     #[test]
     fn factory_dispatches_installer_by_os() {
-        // Both stubs error identically; assert the error names the right backend type.
-        let linux_err = new_installer(Os::Linux).scan().unwrap_err().to_string();
-        assert!(linux_err.contains("UnixInstaller"));
+        // Linux scan now works (scan_root /usr/local may be empty, but does not error).
+        // Just confirm the factory returns a usable installer for each OS.
+        let _linux = new_installer(Os::Linux);
         let win_err = new_installer(Os::Windows).scan().unwrap_err().to_string();
         assert!(win_err.contains("WindowsInstaller"));
     }
