@@ -5,6 +5,7 @@
 pub mod ports;
 
 pub use ports::{
-    AcquirePlan, Artifact, ArtifactKind, Cached, Candidate, ComponentPolicy, ResolveVia, Resolved,
-    Severity, Verdict,
+    AcquirePlan, Activator, Artifact, ArtifactKind, Cached, Candidate, CompatEngine,
+    ComponentPolicy, DriverProbe, Installer, Inventory, RegistryClient, ResolveVia, Resolved,
+    Resolver, Severity, Verdict,
 };

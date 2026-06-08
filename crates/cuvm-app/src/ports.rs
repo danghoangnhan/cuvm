@@ -1,6 +1,7 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use cuvm_core::{Bundle, Pin};
+use anyhow::Result;
+use cuvm_core::{Bundle, Driver, Manifest, Pin, Platform, Shell, Version, VersionMeta};
 
 // ----- Resolver outputs -----
 
@@ -92,6 +93,195 @@ pub enum ComponentPolicy {
     Only(Vec<String>),
 }
 
+// ----- Trait ports (object-safe; async-free; fallible ones return anyhow::Result) -----
+
+pub trait Resolver {
+    /// Resolve a version spec to a concrete bundle.
+    ///
+    /// # Errors
+    /// Returns an error if the spec cannot be resolved to an installed bundle.
+    fn resolve(&self, spec: &str) -> Result<Resolved>;
+
+    /// Resolve from a directory's pin/alias context, if any applies.
+    ///
+    /// # Errors
+    /// Returns an error if pin discovery or resolution fails.
+    fn resolve_from_dir(&self, cwd: &Path) -> Result<Option<Resolved>>;
+
+    /// Expand an alias name to its target spec.
+    ///
+    /// # Errors
+    /// Returns an error if the alias does not exist or cannot be read.
+    fn expand_alias(&self, name: &str) -> Result<String>;
+
+    /// Find the nearest pin file walking upward from `cwd`.
+    ///
+    /// # Errors
+    /// Returns an error if the filesystem walk fails.
+    fn find_pin_upward(&self, cwd: &Path) -> Result<Option<cuvm_core::Pin>>;
+}
+
+pub trait Activator {
+    /// Emit the activation script for a bundle in the given shell.
+    ///
+    /// # Errors
+    /// Returns an error if the script cannot be rendered.
+    fn emit_env(&self, b: &Bundle, sh: Shell) -> Result<String>;
+
+    /// Emit the deactivation script for the given shell.
+    ///
+    /// # Errors
+    /// Returns an error if the script cannot be rendered.
+    fn emit_deactivate(&self, sh: Shell) -> Result<String>;
+
+    /// Emit the shell-integration hook for the given shell.
+    ///
+    /// # Errors
+    /// Returns an error if the hook cannot be rendered.
+    fn hook(&self, sh: Shell) -> Result<String>;
+
+    /// Whether this backend supports the given shell.
+    fn supports(&self, sh: Shell) -> bool;
+}
+
+pub trait Installer {
+    /// Download/acquire the artifacts in `plan`.
+    ///
+    /// # Errors
+    /// Returns an error if any artifact cannot be acquired.
+    fn acquire(&self, plan: &AcquirePlan) -> Result<Vec<Cached>>;
+
+    /// Verify the checksums of cached artifacts.
+    ///
+    /// # Errors
+    /// Returns an error if verification fails for any artifact.
+    fn verify(&self, arts: &[Cached]) -> Result<()>;
+
+    /// Extract the cached artifacts atomically into a temp area.
+    ///
+    /// # Errors
+    /// Returns an error if extraction fails.
+    fn extract_atomic(&self, arts: &[Cached], tmp: &Path) -> Result<std::path::PathBuf>;
+
+    /// Place the extracted toolkit into its final destination.
+    ///
+    /// # Errors
+    /// Returns an error if the placement fails.
+    fn place(&self, tmp: &Path, dst: &Path, meta: &VersionMeta) -> Result<()>;
+
+    /// Run a post-install smoke test against the placed toolkit.
+    ///
+    /// # Errors
+    /// Returns an error if the smoke test fails.
+    fn smoke_test(&self, root: &Path) -> Result<()>;
+
+    /// Ingest a user-supplied artifact file.
+    ///
+    /// # Errors
+    /// Returns an error if the file cannot be ingested.
+    fn ingest_supplied(&self, file: &Path, kind: ArtifactKind) -> Result<std::path::PathBuf>;
+
+    /// Scan the system for existing installs that could be adopted.
+    ///
+    /// # Errors
+    /// Returns an error if scanning fails.
+    fn scan(&self) -> Result<Vec<Candidate>>;
+
+    /// Adopt a scan candidate into a managed bundle.
+    ///
+    /// # Errors
+    /// Returns an error if adoption fails.
+    fn adopt(&self, c: &Candidate) -> Result<Bundle>;
+}
+
+pub trait Inventory {
+    /// List all managed bundles.
+    ///
+    /// # Errors
+    /// Returns an error if the manifest cannot be loaded.
+    fn list(&self) -> Result<Vec<Bundle>>;
+
+    /// Deregister a bundle by handle.
+    ///
+    /// # Errors
+    /// Returns an error if the bundle cannot be deregistered.
+    fn deregister(&self, handle: &str) -> Result<()>;
+
+    /// Set an alias to a target spec.
+    ///
+    /// # Errors
+    /// Returns an error if the alias cannot be persisted.
+    fn set_alias(&self, n: &str, t: &str) -> Result<()>;
+
+    /// Load the manifest.
+    ///
+    /// # Errors
+    /// Returns an error if the manifest cannot be read or parsed.
+    fn load(&self) -> Result<Manifest>;
+
+    /// Save the manifest.
+    ///
+    /// # Errors
+    /// Returns an error if the manifest cannot be written.
+    fn save(&self, m: &Manifest) -> Result<()>;
+}
+
+pub trait RegistryClient {
+    /// List available toolkit versions for a platform.
+    ///
+    /// # Errors
+    /// Returns an error if the registry cannot be queried.
+    fn list_toolkits(&self, p: &Platform) -> Result<Vec<Version>>;
+
+    /// List available cuDNN versions for a platform and CUDA major.
+    ///
+    /// # Errors
+    /// Returns an error if the registry cannot be queried.
+    fn list_cudnn(&self, p: &Platform, major: u32) -> Result<Vec<Version>>;
+
+    /// Resolve a toolkit version to its component artifacts.
+    ///
+    /// # Errors
+    /// Returns an error if resolution fails.
+    fn resolve_toolkit(
+        &self,
+        v: &Version,
+        p: &Platform,
+        want: &ComponentPolicy,
+    ) -> Result<Vec<Artifact>>;
+
+    /// Resolve a cuDNN version to its artifacts.
+    ///
+    /// # Errors
+    /// Returns an error if resolution fails.
+    fn resolve_cudnn(&self, v: &Version, p: &Platform, major: u32) -> Result<Vec<Artifact>>;
+}
+
+pub trait DriverProbe {
+    /// Probe the installed NVIDIA driver.
+    ///
+    /// # Errors
+    /// Returns an error if the driver cannot be probed.
+    fn probe(&self) -> Result<Driver>;
+}
+
+pub trait CompatEngine {
+    /// The maximum toolkit version supported by the given driver.
+    ///
+    /// # Errors
+    /// Returns an error if the ceiling cannot be determined.
+    fn max_toolkit_for_driver(&self, d: &Driver) -> Result<Version>;
+
+    /// Check whether a wanted toolkit is compatible with the driver.
+    fn check_toolkit(&self, d: &Driver, want: &Version, strict: bool) -> Verdict;
+
+    /// Pick the best-matching cuDNN for a toolkit from the available set.
+    fn pair_cudnn(&self, tk: &Version, avail: &[Version]) -> Option<Version>;
+
+    /// Validate a specific toolkit/cuDNN pairing.
+    fn validate_pair(&self, tk: &Version, cudnn: &Version) -> Verdict;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +347,22 @@ mod tests {
         assert_eq!(a.component, "cuda_nvcc");
         assert!(a.relative_path.starts_with("cuda_nvcc/"));
         assert_eq!(a.size, 1234);
+    }
+
+    // Object-safety witnesses: each must accept a trait object.
+    // (If any trait were not object-safe, these fns would fail to compile.)
+    fn _assert_resolver_object_safe(_: &dyn Resolver) {}
+    fn _assert_activator_object_safe(_: &dyn Activator) {}
+    fn _assert_installer_object_safe(_: &dyn Installer) {}
+    fn _assert_inventory_object_safe(_: &dyn Inventory) {}
+    fn _assert_registry_object_safe(_: &dyn RegistryClient) {}
+    fn _assert_driverprobe_object_safe(_: &dyn DriverProbe) {}
+    fn _assert_compat_object_safe(_: &dyn CompatEngine) {}
+
+    #[test]
+    fn ports_are_object_safe() {
+        // Compiling the witnesses above is the assertion; this test just anchors them.
+        fn takes_fn(_f: fn(&dyn Resolver)) {}
+        takes_fn(_assert_resolver_object_safe);
     }
 }
