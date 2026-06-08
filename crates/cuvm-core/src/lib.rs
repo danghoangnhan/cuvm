@@ -1,4 +1,7 @@
 //! cuvm-core — pure domain types with ZERO I/O dependencies.
+//!
+//! No http, no fs, no async in the public API: just numeric versions, domain
+//! structs, serde manifest value types, the OS-neutral `EnvPlan`, and errors.
 
 #![forbid(unsafe_code)]
 
@@ -13,6 +16,6 @@ pub use domain::{
     Toolkit,
 };
 pub use envplan::EnvPlan;
-pub use error::CoreError;
+pub use error::{CompatError, CoreError};
 pub use manifest::{BundleRecord, DriverRecord, Manifest, VersionMeta};
 pub use version::Version;
