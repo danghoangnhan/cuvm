@@ -22,6 +22,29 @@ pub enum CompatError {
     CudnnMismatch { cuda_major: u32, cudnn_major: u32 },
 }
 
+/// Typed error enum for the resolver / version-grammar layer.
+///
+/// Designed to be `PartialEq` so unit tests can assert on specific variants.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum CoreErr {
+    #[error("invalid version string {0:?}: {1}")]
+    BadVersion(String, &'static str),
+
+    #[error(
+        "no installed toolkit matches {spec:?}; run `cuvm install {spec}` to install it"
+    )]
+    NotInstalled { spec: String },
+
+    #[error("alias cycle detected while expanding {0:?}")]
+    AliasCycle(String),
+
+    #[error("alias {0:?} is not defined")]
+    UnknownAlias(String),
+}
+
+/// Convenience `Result` alias for the resolver layer.
+pub type Result<T> = std::result::Result<T, CoreErr>;
+
 #[cfg(test)]
 mod tests {
     use super::*;

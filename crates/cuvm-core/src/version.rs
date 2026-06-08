@@ -188,4 +188,64 @@ mod tests {
         xs.sort();
         assert_eq!(xs.last().unwrap().raw, "12.4.10");
     }
+
+    // ---- WU-2 Task 2.1: parse tests ----------------------------------------
+
+    #[test]
+    fn parse_two_part() {
+        let v = Version::parse("12.4").expect("parse 12.4");
+        assert_eq!(v.fields, vec![12, 4]);
+        assert_eq!(v.raw, "12.4");
+        assert_eq!(v.major(), 12);
+    }
+
+    #[test]
+    fn parse_three_part_driver() {
+        let v = Version::parse("570.124.06").expect("parse driver");
+        assert_eq!(v.fields, vec![570, 124, 6]);
+        assert_eq!(v.raw, "570.124.06");
+    }
+
+    #[test]
+    fn parse_five_part_cccl() {
+        let v = Version::parse("13.3.3.3.1").expect("parse cccl");
+        assert_eq!(v.fields, vec![13, 3, 3, 3, 1]);
+        assert_eq!(v.major(), 13);
+    }
+
+    #[test]
+    fn parse_rejects_empty() {
+        assert!(Version::parse("").is_err());
+    }
+
+    #[test]
+    fn parse_rejects_non_numeric() {
+        assert!(Version::parse("12.x").is_err());
+        assert!(Version::parse("latest").is_err());
+        assert!(Version::parse("12..4").is_err());
+    }
+
+    // ---- WU-2 Task 2.2: ordering tests -------------------------------------
+
+    #[test]
+    fn ord_numeric_not_lexical() {
+        // 570.124.06 > 570.26 (numeric); lexical comparison of "124" vs "26"
+        // would compare '1' < '2' and give the WRONG answer.
+        assert!(v("570.124.06") > v("570.26"));
+        assert!(v("570.26") < v("570.124.06"));
+    }
+
+    #[test]
+    fn ord_major_dominates() {
+        // `12` must NOT outrank any 13.x.
+        assert!(v("13.0") > v("12.9"));
+        assert!(v("12") < v("13.3.3.3.1"));
+    }
+
+    #[test]
+    fn ord_missing_tail_is_zero() {
+        assert_eq!(v("12.4"), v("12.4.0"));
+        assert_eq!(v("12.4.0.0"), v("12.4"));
+        assert!(v("12.4.1") > v("12.4"));
+    }
 }

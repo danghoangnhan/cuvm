@@ -16,6 +16,6 @@ pub use domain::{
     Toolkit,
 };
 pub use envplan::EnvPlan;
-pub use error::{CompatError, CoreError};
+pub use error::{CompatError, CoreErr, CoreError, Result};
 pub use manifest::{BundleRecord, DriverRecord, Manifest, VersionMeta};
 pub use version::Version;
