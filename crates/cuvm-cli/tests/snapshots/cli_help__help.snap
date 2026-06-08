@@ -1,11 +1,16 @@
 ---
 source: crates/cuvm-cli/tests/cli_help.rs
-assertion_line: 26
 expression: stdout
 ---
 cuvm — a CUDA toolkit version manager (nvm for CUDA).
 
-Usage: cuvm
+Usage: cuvm [COMMAND]
+
+Commands:
+  adopt      Discover and register existing CUDA toolkits in place
+  ls         List installed/adopted bundles
+  uninstall  De-register a bundle (adopted installs are not deleted — ADR-005)
+  help       Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

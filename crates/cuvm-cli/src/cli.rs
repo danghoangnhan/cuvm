@@ -3,6 +3,8 @@
 
 use clap::Parser;
 
+use crate::commands::Command;
+
 /// cuvm — a CUDA toolkit version manager (nvm for CUDA).
 #[derive(Debug, Parser)]
 #[command(
@@ -11,7 +13,10 @@ use clap::Parser;
     about = "cuvm — a CUDA toolkit version manager (nvm for CUDA).",
     long_about = None
 )]
-pub struct Cli {}
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
 
 impl Cli {
     /// Parse process args into the root CLI. Exits the process on
