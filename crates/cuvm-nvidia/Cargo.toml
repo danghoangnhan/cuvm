@@ -11,3 +11,8 @@ workspace = true
 
 [dependencies]
 cuvm-core = { path = "../cuvm-core" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
