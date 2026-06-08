@@ -7,6 +7,7 @@
 
 pub mod candidate;
 pub mod domain;
+pub mod env_plan;
 pub mod envplan;
 pub mod error;
 pub mod manifest;
@@ -17,6 +18,7 @@ pub use domain::{
     current_platform, Alias, Arch, Bundle, Companion, Cudnn, Driver, GpuClass, Os, Pin, Platform,
     Shell, Source, Toolkit,
 };
+pub use env_plan::plan_for;
 pub use envplan::EnvPlan;
 pub use error::{CompatError, CoreError, CoreResult};
 pub use manifest::{BundleRecord, DriverRecord, Manifest, VersionMeta, SCHEMA_VERSION};
