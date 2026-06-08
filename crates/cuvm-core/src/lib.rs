@@ -5,12 +5,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod candidate;
 pub mod domain;
 pub mod envplan;
 pub mod error;
 pub mod manifest;
 pub mod version;
 
+pub use candidate::Candidate;
 pub use domain::{
     current_platform, Alias, Arch, Bundle, Companion, Cudnn, Driver, GpuClass, Os, Pin, Platform,
     Shell, Source, Toolkit,
