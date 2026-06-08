@@ -1,0 +1,12 @@
+---
+source: crates/cuvm-cli/tests/cli_help.rs
+assertion_line: 26
+expression: stdout
+---
+cuvm — a CUDA toolkit version manager (nvm for CUDA).
+
+Usage: cuvm
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
