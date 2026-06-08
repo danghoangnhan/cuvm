@@ -29,10 +29,7 @@ pub fn write_atomic(target: &Path, bytes: &[u8]) -> Result<()> {
     })();
     if let Err(source) = res {
         let _ = fs::remove_file(&tmp);
-        return Err(StoreError::Io {
-            path: tmp,
-            source,
-        });
+        return Err(StoreError::Io { path: tmp, source });
     }
     fs::rename(&tmp, target).map_err(|source| {
         let _ = fs::remove_file(&tmp);

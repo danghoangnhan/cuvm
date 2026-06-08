@@ -117,7 +117,11 @@ mod tests {
         let err = read_manifest(&path).unwrap_err();
         assert!(matches!(
             err,
-            StoreError::SchemaTooNew { found: 999, supported: 1, .. }
+            StoreError::SchemaTooNew {
+                found: 999,
+                supported: 1,
+                ..
+            }
         ));
     }
 

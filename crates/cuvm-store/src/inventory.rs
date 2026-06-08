@@ -140,7 +140,11 @@ mod tests {
         let (_d, inv) = inv();
         inv.set_alias("default", "12.4.1").unwrap();
         assert_eq!(
-            inv.load().unwrap().aliases.get("default").map(String::as_str),
+            inv.load()
+                .unwrap()
+                .aliases
+                .get("default")
+                .map(String::as_str),
             Some("12.4.1")
         );
     }
@@ -189,11 +193,8 @@ mod tests {
             has_lib64: true,
             installed_at: datetime!(2026-06-08 10:30:00 UTC),
         };
-        crate::meta_io::write_meta(
-            &dir.path().join("versions/12.4.1/.cuvm-meta.json"),
-            &meta,
-        )
-        .unwrap();
+        crate::meta_io::write_meta(&dir.path().join("versions/12.4.1/.cuvm-meta.json"), &meta)
+            .unwrap();
 
         let bundles = inv.list().unwrap();
         assert_eq!(bundles.len(), 1);

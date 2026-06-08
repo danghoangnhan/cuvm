@@ -1,4 +1,4 @@
-//! End-to-end: CUVM_HOME resolution + atomic save guarantees.
+//! End-to-end: `CUVM_HOME` resolution + atomic save guarantees.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -59,11 +59,13 @@ fn original_manifest_intact_when_save_target_blocked() {
     let inv = FsInventory::new(Layout::new(dir.path()));
 
     // first good save
-    let mut good = Manifest::default();
-    good.aliases = {
-        let mut a = BTreeMap::new();
-        a.insert("default".to_string(), "12.4.1".to_string());
-        a
+    let good = Manifest {
+        aliases: {
+            let mut a = BTreeMap::new();
+            a.insert("default".to_string(), "12.4.1".to_string());
+            a
+        },
+        ..Manifest::default()
     };
     inv.save(&good).unwrap();
     let original_bytes = fs::read(dir.path().join("manifest.json")).unwrap();

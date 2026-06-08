@@ -32,9 +32,7 @@ impl Layout {
             }
         }
         let home = home_dir.ok_or_else(|| {
-            StoreError::HomeUnresolved(
-                "no CUVM_HOME and no home directory available".to_string(),
-            )
+            StoreError::HomeUnresolved("no CUVM_HOME and no home directory available".to_string())
         })?;
         Ok(Layout::new(home.join(".cuvm")))
     }
@@ -100,7 +98,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(l.root(), Path::new("/custom/cuvmhome"));
-        assert_eq!(l.manifest_path(), Path::new("/custom/cuvmhome/manifest.json"));
+        assert_eq!(
+            l.manifest_path(),
+            Path::new("/custom/cuvmhome/manifest.json")
+        );
     }
 
     #[test]
