@@ -1,0 +1,131 @@
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+
+use crate::Source;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Manifest {
+    pub schema_version: u32,
+    pub bundles: Vec<BundleRecord>,
+    pub aliases: BTreeMap<String, String>,
+    pub pins: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub last_driver: Option<DriverRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BundleRecord {
+    pub version: String,
+    pub source: Source,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cudnn: Option<String>,
+    pub components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub sha256: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub installed_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VersionMeta {
+    pub version: String,
+    pub source: Source,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cudnn: Option<String>,
+    pub components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub sha256: Option<String>,
+    pub has_lib64: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub installed_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriverRecord {
+    pub version: String,
+    pub cuda_ceiling: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use time::macros::datetime;
+
+    fn sample() -> Manifest {
+        let mut aliases = BTreeMap::new();
+        aliases.insert("default".to_string(), "12.4.1".to_string());
+        aliases.insert("lts".to_string(), "11.8.0".to_string());
+        let mut pins = BTreeMap::new();
+        pins.insert("/home/u/proj".to_string(), "12.4".to_string());
+        Manifest {
+            schema_version: 1,
+            bundles: vec![BundleRecord {
+                version: "12.4.1".to_string(),
+                source: crate::Source::Downloaded,
+                path: "/home/u/.cuvm/versions/12.4.1".to_string(),
+                cudnn: Some("9.8.0".to_string()),
+                components: vec!["cuda_nvcc".into(), "cuda_cudart".into()],
+                sha256: Some("abc123".to_string()),
+                installed_at: datetime!(2026-06-08 10:30:00 UTC),
+            }],
+            aliases,
+            pins,
+            last_driver: Some(DriverRecord {
+                version: "550.54.14".to_string(),
+                cuda_ceiling: "12.4".to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn manifest_round_trips_through_json() {
+        let m = sample();
+        let json = serde_json::to_string_pretty(&m).unwrap();
+        let back: Manifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[test]
+    fn manifest_json_uses_expected_field_names() {
+        let m = sample();
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"schema_version\":1"));
+        assert!(json.contains("\"last_driver\""));
+        assert!(json.contains("\"cuda_ceiling\":\"12.4\""));
+        // Source serialized lowercase via domain::Source.
+        assert!(json.contains("\"source\":\"downloaded\""));
+    }
+
+    #[test]
+    fn aliases_serialize_in_btreemap_sorted_order() {
+        let json = serde_json::to_string(&sample()).unwrap();
+        // "default" sorts before "lts".
+        let d = json.find("\"default\"").unwrap();
+        let l = json.find("\"lts\"").unwrap();
+        assert!(
+            d < l,
+            "BTreeMap must emit aliases sorted for golden stability"
+        );
+    }
+
+    #[test]
+    fn version_meta_round_trips() {
+        let vm = VersionMeta {
+            version: "13.3.0".to_string(),
+            source: crate::Source::Downloaded,
+            cudnn: None,
+            components: vec!["cuda_nvcc".into(), "cuda_crt".into(), "cccl".into()],
+            sha256: None,
+            has_lib64: false,
+            installed_at: datetime!(2026-06-08 11:00:00 UTC),
+        };
+        let json = serde_json::to_string(&vm).unwrap();
+        let back: VersionMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(vm, back);
+        assert!(json.contains("\"has_lib64\":false"));
+    }
+}

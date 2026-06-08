@@ -4,6 +4,7 @@
 
 pub mod domain;
 pub mod error;
+pub mod manifest;
 pub mod version;
 
 pub use domain::{
@@ -11,4 +12,5 @@ pub use domain::{
     Toolkit,
 };
 pub use error::CoreError;
+pub use manifest::{BundleRecord, DriverRecord, Manifest, VersionMeta};
 pub use version::Version;
