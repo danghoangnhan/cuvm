@@ -51,6 +51,12 @@ jobs:
           key: ${{ matrix.target }}
       - name: Install Zig
         uses: mlugg/setup-zig@v1
+        with:
+          # Pin a real stable release. With no version the action resolved to a
+          # 0.16.0-dev build on the rotating ziglang.org/builds path, which 404s
+          # once that nightly rotates out; a pinned stable is fetched from the
+          # permanent /download/<ver> path.
+          version: 0.13.0
       - name: Install cargo-zigbuild
         uses: taiki-e/install-action@v2
         with:
