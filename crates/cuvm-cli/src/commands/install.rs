@@ -13,6 +13,21 @@ use cuvm_app::{
 use cuvm_core::manifest::BundleRecord;
 use cuvm_core::{current_platform, Driver, GpuClass, Os, Source, Version, VersionMeta};
 
+/// Result of installing a single spec; drives the per-target change line and the
+/// aggregate summary (§5.1/§5.4 of the spec).
+#[derive(Debug)]
+pub enum InstallOutcome {
+    /// Freshly installed (no prior bundle for this handle).
+    Installed { handle: String, path: std::path::PathBuf },
+    /// Re-installed over an existing bundle (`--reinstall`).
+    Reinstalled { handle: String, path: std::path::PathBuf },
+    /// Already present and `--reinstall` not passed: a no-op.
+    AlreadyPresent { handle: String },
+    /// Windows-only: the download path degraded to read-only adopt (spec §2.2).
+    #[cfg(not(unix))]
+    Adopted { handle: String, path: std::path::PathBuf },
+}
+
 /// `cuvm ls-remote`: print available toolkit versions, newest first.
 ///
 /// # Errors
@@ -108,18 +123,47 @@ pub fn run_install(
     reinstall: bool,
     force: bool,
 ) -> Result<i32> {
+    let started = std::time::Instant::now();
+    let mut installed: Vec<String> = Vec::new();
     let mut failed = 0usize;
+
     for spec in specs {
         match install_one(
             registry, installer, inventory, engine, driver_probe, version_dir, spec, reinstall,
             force,
         ) {
-            Ok(handle) => println!("installed {handle}"),
+            Ok(InstallOutcome::Installed { handle, path }) => {
+                println!("+ cuda {handle}  ->  {}", path.display());
+                installed.push(handle);
+            }
+            Ok(InstallOutcome::Reinstalled { handle, path }) => {
+                println!("~ cuda {handle}  ->  {}", path.display());
+                installed.push(handle);
+            }
+            #[cfg(not(unix))]
+            Ok(InstallOutcome::Adopted { handle, path }) => {
+                println!("+ cuda {handle} (adopted)  ->  {}", path.display());
+                installed.push(handle);
+            }
+            Ok(InstallOutcome::AlreadyPresent { handle }) => {
+                eprintln!("cuvm: {handle} is already installed");
+            }
             Err(e) => {
                 eprintln!("cuvm: error installing {spec}: {e:#}");
                 failed += 1;
             }
         }
+    }
+
+    let elapsed = started.elapsed().as_secs_f64();
+    match installed.len() {
+        0 => {
+            if failed == 0 && specs.len() > 1 {
+                eprintln!("cuvm: all requested versions already installed");
+            }
+        }
+        1 => eprintln!("Installed CUDA {} in {elapsed:.1}s", installed[0]),
+        n => eprintln!("Installed {n} toolkits in {elapsed:.1}s"),
     }
     Ok(i32::from(failed > 0))
 }
@@ -143,8 +187,7 @@ fn install_one(
     spec: &str,
     reinstall: bool,
     force: bool,
-) -> Result<String> {
-    let _ = reinstall;
+) -> Result<InstallOutcome> {
     let platform = current_platform();
 
     // 1. Resolve newest patch matching `spec` from the registry.
@@ -156,6 +199,17 @@ fn install_one(
         .find(|v| version_matches(spec, v))
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("no remote toolkit matches `{spec}`"))?;
+
+    // Idempotency: a bundle already exists for this handle (any source).
+    let existed = {
+        let manifest = inventory.load()?;
+        manifest.bundles.iter().any(|b| b.version == want.raw)
+    };
+    if existed && !reinstall {
+        return Ok(InstallOutcome::AlreadyPresent {
+            handle: want.raw.clone(),
+        });
+    }
 
     // 2. Driver-ceiling compat gate (warn + --force; never hard-block).
     let driver = driver_probe.probe()?;
@@ -242,7 +296,11 @@ fn install_one(
     manifest.bundles.push(record);
     inventory.save(&manifest)?;
 
-    Ok(handle)
+    if existed {
+        Ok(InstallOutcome::Reinstalled { handle, path: dst })
+    } else {
+        Ok(InstallOutcome::Installed { handle, path: dst })
+    }
 }
 
 /// `cuvm uninstall <ver>`: for `Downloaded`/`Supplied` rows, delete the

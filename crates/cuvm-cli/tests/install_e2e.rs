@@ -5,6 +5,7 @@ use assert_cmd::Command;
 use assert_fs::prelude::*;
 use assert_fs::TempDir;
 use httpmock::prelude::*;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use std::path::Path;
 
@@ -150,7 +151,7 @@ fn install_downloads_extracts_places_and_records_manifest() {
         .args(["install", "12.4", "--no-cudnn"])
         .assert()
         .success()
-        .stdout(contains("installed 12.4.1"));
+        .stdout(contains("cuda 12.4.1"));
 
     // toolkit landed in versions/<handle> with the component files present.
     home.child("versions/12.4.1/bin/nvcc")
@@ -212,7 +213,7 @@ fn compat_gate_refuses_without_force_and_proceeds_with_force() {
         .args(["install", "12.4", "--force"])
         .assert()
         .success()
-        .stdout(contains("installed 12.4.1"));
+        .stdout(contains("cuda 12.4.1"));
     home.child("versions/12.4.1/bin/nvcc")
         .assert(predicates::path::exists());
 }
@@ -314,4 +315,35 @@ fn install_help_documents_reinstall_flag() {
         .assert()
         .success()
         .stdout(contains("--reinstall"));
+}
+
+#[cfg(unix)]
+#[test]
+fn install_is_idempotent_and_reinstall_forces() {
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    let server = MockServer::start();
+    serve_redist_124(&server, fixtures.path());
+
+    let run = || {
+        let mut c = cuvm();
+        c.env("CUVM_HOME", home.path())
+            .env("CUVM_REGISTRY_URL", format!("{}/redist/", server.base_url()))
+            .env("CUVM_SKIP_SMOKE", "1");
+        c
+    };
+
+    // First install: a change line on stdout.
+    run().args(["install", "12.4", "--no-cudnn"])
+        .assert().success().stdout(contains("cuda 12.4.1"));
+
+    // Second install: no-op, message on stderr, no new change line on stdout.
+    run().args(["install", "12.4", "--no-cudnn"])
+        .assert().success()
+        .stderr(contains("12.4.1 is already installed"))
+        .stdout(contains("cuda 12.4.1").not());
+
+    // --reinstall: re-runs, emitting the `~` change line.
+    run().args(["install", "12.4", "--no-cudnn", "--reinstall"])
+        .assert().success().stdout(contains("~ cuda 12.4.1"));
 }
