@@ -209,6 +209,41 @@ pub fn run_install(
     Ok(())
 }
 
+/// `cuvm uninstall <ver>`: for `Downloaded`/`Supplied` rows, delete the
+/// `versions/<ver>` directory and deregister; for `Adopted` rows, deregister only
+/// (referenced-in-place files are never deleted — ADR-005).
+///
+/// # Errors
+/// Returns an error if manifest I/O or directory removal fails.
+pub fn run_uninstall(inventory: &dyn Inventory, home: &Path, spec: &str) -> Result<()> {
+    let manifest = inventory.load()?;
+    let row = manifest.bundles.iter().find(|b| b.version == spec).cloned();
+
+    match row {
+        Some(r) if matches!(r.source, Source::Downloaded | Source::Supplied) => {
+            let dir = if Path::new(&r.path).is_absolute() {
+                std::path::PathBuf::from(&r.path)
+            } else {
+                home.join(&r.path)
+            };
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir)?;
+            }
+            inventory.deregister(spec)?;
+            println!("removed {spec}");
+        }
+        Some(_) => {
+            inventory.deregister(spec)?;
+            println!("deregistered {spec} (adopted files left in place)");
+        }
+        None => {
+            inventory.deregister(spec)?;
+            println!("deregistered {spec}");
+        }
+    }
+    Ok(())
+}
+
 /// Windows-only: degrade a blocked/empty download into the M1 read-only adopt
 /// path. Scans for an in-place toolkit matching the wanted handle and records an
 /// `Adopted` bundle (referenced-in-place, never deleted — ADR-005).

@@ -272,8 +272,7 @@ impl Command {
             }
             Command::Doctor => doctor::run(deps),
             Command::Uninstall { spec } => {
-                deps.inventory.deregister(&spec)?;
-                println!("deregistered {spec}");
+                install::run_uninstall(deps.inventory.as_ref(), &deps.home, &spec)?;
                 Ok(0)
             }
             Command::Hook { shell, os } => {

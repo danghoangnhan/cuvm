@@ -216,3 +216,56 @@ fn compat_gate_refuses_without_force_and_proceeds_with_force() {
     home.child("versions/12.4.1/bin/nvcc")
         .assert(predicates::path::exists());
 }
+
+fn seed_manifest(home: &TempDir, version: &str, source: &str, path: &str) {
+    let manifest = format!(
+        r#"{{"schema_version":1,"bundles":[
+  {{"version":"{version}","source":"{source}","path":"{path}","cudnn":null,
+    "components":[],"sha256":null,"installed_at":"2026-06-08T00:00:00Z"}}
+],"aliases":{{}},"pins":{{}},"last_driver":null}}"#
+    );
+    home.child("manifest.json").write_str(&manifest).unwrap();
+}
+
+#[test]
+fn uninstall_downloaded_deletes_versions_dir_and_deregisters() {
+    let home = TempDir::new().unwrap();
+    home.child("versions/12.4.1/bin/nvcc")
+        .write_str("x")
+        .unwrap();
+    seed_manifest(&home, "12.4.1", "downloaded", "versions/12.4.1");
+
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .args(["uninstall", "12.4.1"])
+        .assert()
+        .success()
+        .stdout(contains("removed 12.4.1"));
+
+    home.child("versions/12.4.1")
+        .assert(predicates::path::missing());
+    let manifest = std::fs::read_to_string(home.child("manifest.json").path()).unwrap();
+    assert!(!manifest.contains("\"12.4.1\""), "{manifest}");
+}
+
+#[test]
+fn uninstall_adopted_deregisters_but_keeps_files() {
+    let home = TempDir::new().unwrap();
+    let external = TempDir::new().unwrap();
+    external.child("bin/nvcc").write_str("x").unwrap();
+    let ext_path = external.path().to_string_lossy().replace('\\', "\\\\");
+    seed_manifest(&home, "12.4.1", "adopted", &ext_path);
+
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .args(["uninstall", "12.4.1"])
+        .assert()
+        .success()
+        .stdout(contains("deregistered 12.4.1"));
+
+    external
+        .child("bin/nvcc")
+        .assert(predicates::path::exists());
+    let manifest = std::fs::read_to_string(home.child("manifest.json").path()).unwrap();
+    assert!(!manifest.contains("\"12.4.1\""), "{manifest}");
+}
