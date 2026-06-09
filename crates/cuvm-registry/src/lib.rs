@@ -480,6 +480,24 @@ mod manifest_tests {
         let err = RedistManifest::parse("<html>not json</html>").unwrap_err();
         assert!(matches!(err, RegistryError::Parse(_)));
     }
+
+    #[test]
+    fn scrape_dedups_equal_versions_with_distinct_raw() {
+        let html = r#"
+          <a href="redistrib_13.3.json">a</a>
+          <a href="redistrib_13.3.0.json">b</a>
+        "#;
+        let raws = super::scrape_redistrib_versions(html);
+        // The scraper keeps both raw strings; Version Eq collapses them downstream.
+        assert_eq!(raws, vec!["13.3", "13.3.0"]);
+        let mut versions: Vec<cuvm_core::Version> = raws
+            .iter()
+            .map(|s| cuvm_core::Version::parse(s).unwrap())
+            .collect();
+        versions.sort();
+        versions.dedup();
+        assert_eq!(versions.len(), 1, "13.3 and 13.3.0 must collapse to one");
+    }
 }
 
 #[cfg(test)]
