@@ -37,25 +37,6 @@ pub(crate) enum InstallOutcome {
     },
 }
 
-/// `cuvm ls-remote`: print available toolkit versions, newest first.
-///
-/// # Errors
-/// Returns an error if the registry index cannot be fetched or parsed.
-pub fn run_ls_remote(registry: &dyn RegistryClient) -> Result<()> {
-    let platform = current_platform();
-    let mut versions = registry.list_toolkits(&platform)?;
-    versions.sort();
-    versions.reverse();
-    if versions.is_empty() {
-        println!("(no remote toolkits found)");
-        return Ok(());
-    }
-    for v in &versions {
-        println!("{v}");
-    }
-    Ok(())
-}
-
 /// Result of the driver-ceiling compat gate. Per §11/§2.4 the gate is advisory:
 /// it only `Refused`s when the toolkit is incompatible **and** `--force` was not
 /// passed. A missing driver is always `Proceed` ("driver unknown, build-only OK").
