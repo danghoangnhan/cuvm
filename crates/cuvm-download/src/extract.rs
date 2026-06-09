@@ -5,6 +5,8 @@
 //! `zip` crate for Windows redistributables. Both route every entry through
 //! [`safe_join`], a zip-slip guard that rejects `..` traversal and absolute paths.
 
+use std::fs;
+use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
 
 use thiserror::Error;
@@ -46,9 +48,6 @@ pub enum ExtractError {
 ///
 /// # Errors
 /// Returns [`ExtractError::ZipSlip`] if the normalized entry would escape `dest`.
-// Consumed by `extract_tar_xz`/`extract_zip` in the following tasks; until then it
-// is reached only from tests, so the lib-only build sees it as unused.
-#[cfg_attr(not(test), allow(dead_code))]
 fn safe_join(dest: &Path, entry: &str) -> Result<PathBuf, ExtractError> {
     let slip = || ExtractError::ZipSlip {
         entry: entry.to_string(),
@@ -75,6 +74,108 @@ fn safe_join(dest: &Path, entry: &str) -> Result<PathBuf, ExtractError> {
         }
     }
     Ok(out)
+}
+
+/// Decode a `.tar.xz` (pure-Rust xz via `lzma-rs`) and unpack it into `dest`.
+///
+/// Every entry is routed through [`safe_join`] so a malicious archive cannot
+/// escape `dest`. `dest` is created (recursively) if it does not exist.
+///
+/// # Errors
+/// Returns [`ExtractError::Xz`] on xz-decode failure, [`ExtractError::ZipSlip`]
+/// if any entry escapes `dest`, or [`ExtractError::Io`] on filesystem failure.
+pub fn extract_tar_xz(archive: &Path, dest: &Path) -> Result<(), ExtractError> {
+    let raw = fs::read(archive)?;
+    let mut decoded = Vec::new();
+    lzma_rs::xz_decompress(&mut Cursor::new(raw), &mut decoded)
+        .map_err(|e| ExtractError::Xz(e.to_string()))?;
+
+    fs::create_dir_all(dest)?;
+    let mut tar = tar::Archive::new(Cursor::new(decoded));
+    for entry in tar.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?;
+        let rel = path.to_string_lossy().into_owned();
+        let target = safe_join(dest, &rel)?;
+
+        if entry.header().entry_type().is_dir() {
+            fs::create_dir_all(&target)?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes)?;
+        fs::write(&target, &bytes)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tar_xz_tests {
+    use super::*;
+    use std::io::Cursor;
+    use tempfile::tempdir;
+
+    /// Build a `.tar.xz` in memory from `(path, bytes)` entries, write it to `at`.
+    #[allow(clippy::cast_possible_truncation)]
+    fn write_tar_xz(at: &Path, entries: &[(&str, &[u8])]) {
+        let mut tar_buf = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_buf);
+            for (name, data) in entries {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(data.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, name, Cursor::new(*data))
+                    .unwrap();
+            }
+            builder.finish().unwrap();
+        }
+        let mut xz_buf = Vec::new();
+        lzma_rs::xz_compress(&mut Cursor::new(&tar_buf), &mut xz_buf).unwrap();
+        std::fs::write(at, &xz_buf).unwrap();
+    }
+
+    #[test]
+    fn extracts_files_with_contents() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("comp.tar.xz");
+        write_tar_xz(
+            &archive,
+            &[
+                ("bin/nvcc", b"#!fake-nvcc"),
+                ("lib/libcudart.so", b"ELF-ish"),
+            ],
+        );
+
+        let dest = dir.path().join("out");
+        extract_tar_xz(&archive, &dest).unwrap();
+
+        assert_eq!(
+            std::fs::read(dest.join("bin/nvcc")).unwrap(),
+            b"#!fake-nvcc"
+        );
+        assert_eq!(
+            std::fs::read(dest.join("lib/libcudart.so")).unwrap(),
+            b"ELF-ish"
+        );
+    }
+
+    #[test]
+    fn creates_dest_when_missing() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("comp.tar.xz");
+        write_tar_xz(&archive, &[("include/cuda.h", b"#pragma once")]);
+
+        let dest = dir.path().join("nested/does/not/exist");
+        extract_tar_xz(&archive, &dest).unwrap();
+
+        assert!(dest.join("include/cuda.h").is_file());
+    }
 }
 
 #[cfg(test)]

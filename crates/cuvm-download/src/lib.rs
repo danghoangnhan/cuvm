@@ -15,5 +15,5 @@ pub mod http;
 
 pub use download::{sha256_file, Downloader};
 pub use error::{DownloadError, Result};
-pub use extract::ExtractError;
+pub use extract::{extract_tar_xz, ExtractError};
 pub use http::http_get;
