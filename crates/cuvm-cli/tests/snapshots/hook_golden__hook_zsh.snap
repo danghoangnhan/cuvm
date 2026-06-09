@@ -1,0 +1,11 @@
+---
+source: crates/cuvm-cli/tests/hook_golden.rs
+expression: "hook_stdout(\"zsh\")"
+---
+autoload -Uz add-zsh-hook
+__cuvm_autoload() {
+  local _script
+  _script="$(command cuvm env --shell bash 2>/dev/null)" || return 0
+  [ -n "$_script" ] && eval "$_script"
+}
+add-zsh-hook chpwd __cuvm_autoload

@@ -1,0 +1,11 @@
+---
+source: crates/cuvm-platform/tests/windows_env_golden.rs
+assertion_line: 53
+expression: script
+---
+set "CUDA_HOME=C:\Users\dev\.cuvm\versions\12.4.1"
+set "CUDA_PATH=C:\Users\dev\.cuvm\versions\12.4.1"
+set "CUDAToolkit_ROOT=C:\Users\dev\.cuvm\versions\12.4.1"
+set "PATH=C:\Users\dev\.cuvm\versions\12.4.1\bin;%PATH%"
+set "CUVM_CURRENT=12.4.1"
+set "CUVM_INJECTED=C:\Users\dev\.cuvm\versions\12.4.1\bin"

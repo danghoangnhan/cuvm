@@ -1,0 +1,24 @@
+---
+source: crates/cuvm-store/src/manifest_io.rs
+expression: json
+---
+{
+  "schema_version": 1,
+  "bundles": [
+    {
+      "version": "12.4.1",
+      "source": "downloaded",
+      "path": "versions/12.4.1",
+      "components": [
+        "cuda_nvcc",
+        "cuda_cudart"
+      ],
+      "sha256": "abc",
+      "installed_at": "2026-06-08T10:30:00Z"
+    }
+  ],
+  "aliases": {
+    "default": "12.4.1"
+  },
+  "pins": {}
+}

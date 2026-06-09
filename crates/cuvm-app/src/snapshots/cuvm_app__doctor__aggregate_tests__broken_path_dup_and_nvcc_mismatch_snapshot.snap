@@ -1,0 +1,20 @@
+---
+source: crates/cuvm-app/src/doctor.rs
+assertion_line: 624
+expression: report.to_string()
+---
+[OK] Active toolkit within driver ceiling (DRIVER_CEILING)
+    active CUDA 12.4.1 <= driver ceiling 12.6 (driver 565.57.01).
+[WARN] Multiple CUDA bin directories on PATH (PATH_DUP_CUDA)
+    PATH contains 2 CUDA bin entries: /opt/cuda-12.2/bin, /home/u/.cuvm/versions/12.4.1/bin
+    hint: Run `cuvm use <ver>` to rebuild a clean CUVM_INJECTED segment.
+[WARN] Stale CUDA bin on PATH (PATH_STALE_CUDA)
+    PATH has CUDA bin(s) outside the active toolkit /home/u/.cuvm/versions/12.4.1: /opt/cuda-12.2/bin
+    hint: `cuvm use <ver>` strips CUVM_INJECTED precisely; remove manual PATH edits.
+[BLOCK] nvcc does not match CUDA_HOME (NVCC_MISMATCH)
+    nvcc resolves to /opt/cuda-12.2/bin (root /opt/cuda-12.2) but CUDA_HOME=/home/u/.cuvm/versions/12.4.1; builds will use a different toolkit than the active one.
+    hint: Run `cuvm use <ver>` so the active bin is first on PATH.
+[WARN] Multiple CUDA lib directories on LD_LIBRARY_PATH (LD_DUP_CUDA)
+    LD_LIBRARY_PATH has 2 CUDA lib entries: /opt/cuda-12.2/lib64, /home/u/.cuvm/versions/12.4.1/lib64
+    hint: `cuvm use <ver>` strips the recorded CUVM_INJECTED lib segment first.
+exit: 2

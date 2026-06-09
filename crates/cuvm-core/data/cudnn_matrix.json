@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "snapshot": "cuDNN 9.23.0, mid-2026",
+  "entries": [
+    { "cudnn": "8.9.7", "cuda_majors": [11, 12] },
+    { "cudnn": "9.23.0", "cuda_majors": [12, 13] }
+  ]
+}

@@ -1,0 +1,34 @@
+[package]
+name = "cuvm-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "cuvm_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cuvm"
+path = "src/main.rs"
+
+[dependencies]
+cuvm-app = { path = "../cuvm-app" }
+cuvm-core = { path = "../cuvm-core" }
+cuvm-nvidia = { path = "../cuvm-nvidia" }
+cuvm-platform = { path = "../cuvm-platform" }
+cuvm-store = { path = "../cuvm-store" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+dirs = "5.0"
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+assert_fs = { workspace = true }
+predicates = { workspace = true }
+insta = { workspace = true }

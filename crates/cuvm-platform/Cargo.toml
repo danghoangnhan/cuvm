@@ -1,0 +1,31 @@
+[package]
+name = "cuvm-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cuvm-core = { path = "../cuvm-core" }
+cuvm-app = { path = "../cuvm-app" }
+anyhow = { workspace = true }
+time = { workspace = true, features = ["std"] }
+
+# The `windows` crate only links on the windows target; the gnu/linux host never
+# pulls it (the win32 syscall floor is behind #[cfg(windows)] with a stub).
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_System_Registry",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+assert_fs = { workspace = true }
+insta = { workspace = true }
+tempfile = { workspace = true }
+predicates = { workspace = true }

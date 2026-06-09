@@ -1,4 +1,4 @@
-# CVM — Architecture Decision Records
+# CUVM — Architecture Decision Records
 
 *Companion to `CVM-Design-Document.md`. Each ADR records one significant decision, the options weighed, and the consequences. Status reflects the locked requirements: cross-platform from day one, full scope including cuDNN, Word-of-the-author stack choice delegated to this analysis.*
 
@@ -11,10 +11,10 @@
 **Deciders:** Daniel Tu (project owner)
 
 ## Context
-CVM must (a) mutate the *current* shell's environment, which a child process cannot do for its parent, and (b) do network downloads, checksum verification, archive extraction, JSON state, and OS-specific env handling — across **Windows and Linux/WSL equally**. The stack choice was delegated to this analysis given those constraints.
+CUVM must (a) mutate the *current* shell's environment, which a child process cannot do for its parent, and (b) do network downloads, checksum verification, archive extraction, JSON state, and OS-specific env handling — across **Windows and Linux/WSL equally**. The stack choice was delegated to this analysis given those constraints.
 
 ## Decision
-Build a **single statically-linked Go binary** for all core logic, paired with **thin, sourced shell shims** (`cvm.sh`/`.zsh`, `cvm.ps1`, `cvm.cmd`) that `eval` an environment script the binary prints. This is the `rbenv` / `nvm-windows` pattern.
+Build a **single statically-linked Go binary** for all core logic, paired with **thin, sourced shell shims** (`cuvm.sh`/`.zsh`, `cuvm.ps1`, `cuvm.cmd`) that `eval` an environment script the binary prints. This is the `rbenv` / `nvm-windows` pattern.
 
 ## Options Considered
 
@@ -80,7 +80,7 @@ The decisive axes are **cross-platform parity** (kills C) and **no runtime depen
 "Switch CUDA version" can mean: change a global symlink/`CUDA_PATH` for the whole machine, or change only the calling shell. The first is the legacy Linux (`/usr/local/cuda`) and Windows-GUI approach; the second is the nvm philosophy. We require no-admin operation and per-project pinning.
 
 ## Decision
-**Per-shell environment mutation is the default and primary mode.** A global junction/`current` pointer is offered only as an **opt-in compatibility shim** (`cvm default`) for toolchains that hard-code a fixed path.
+**Per-shell environment mutation is the default and primary mode.** A global junction/`current` pointer is offered only as an **opt-in compatibility shim** (`cuvm default`) for toolchains that hard-code a fixed path.
 
 ## Options Considered
 
@@ -101,8 +101,8 @@ Per-shell is the only model compatible with no-admin + per-project pinning, whic
 - Revisit if: telemetry shows most users only ever want one global version (then promote `default`).
 
 ## Action Items
-1. [ ] Implement `CVM_INJECTED` breadcrumb + path cleanup in the Activator.
-2. [ ] Implement opt-in `cvm default` writing user-scope env + `versions/current` junction/symlink.
+1. [ ] Implement `CUVM_INJECTED` breadcrumb + path cleanup in the Activator.
+2. [ ] Implement opt-in `cuvm default` writing user-scope env + `versions/current` junction/symlink.
 
 ---
 
@@ -116,7 +116,7 @@ Per-shell is the only model compatible with no-admin + per-project pinning, whic
 The full-scope mandate includes cuDNN. The question is whether cuDNN is a separate thing the user juggles, or part of the switchable unit. cuDNN must match the toolkit's major (often minor) version, and ML users almost always need both together.
 
 ## Decision
-The **switchable unit is a *bundle*** = one toolkit + its pinned companion libs (cuDNN now; NCCL/cuBLAS-extra later). `cvm use 12.4` activates the toolkit and its paired cuDNN atomically. A bundle with no cuDNN is valid for build-only users.
+The **switchable unit is a *bundle*** = one toolkit + its pinned companion libs (cuDNN now; NCCL/cuBLAS-extra later). `cuvm use 12.4` activates the toolkit and its paired cuDNN atomically. A bundle with no cuDNN is valid for build-only users.
 
 ## Options Considered
 
@@ -126,10 +126,10 @@ The **switchable unit is a *bundle*** = one toolkit + its pinned companion libs 
 
 ### Option B: Independent axes (toolkit and cuDNN switched separately)
 **Pros:** Maximum flexibility; smaller core.
-**Cons:** Pushes the hardest correctness problem (version matching) onto the user — the exact pain CVM exists to remove; easy to end up with an incompatible pair.
+**Cons:** Pushes the hardest correctness problem (version matching) onto the user — the exact pain CUVM exists to remove; easy to end up with an incompatible pair.
 
 ## Trade-off Analysis
-CVM's reason to exist over `switch-cuda` is removing footguns. Letting users mismatch cuDNN re-introduces the footgun. Bundling, with a built-in compatibility matrix and `doctor` validation, is the differentiator. Flexibility is preserved via `--cudnn <ver>` / `--no-cudnn` overrides.
+CUVM's reason to exist over `switch-cuda` is removing footguns. Letting users mismatch cuDNN re-introduces the footgun. Bundling, with a built-in compatibility matrix and `doctor` validation, is the differentiator. Flexibility is preserved via `--cudnn <ver>` / `--no-cudnn` overrides.
 
 ## Consequences
 - Easier: "it just works" switching for ML; doctor can guarantee pairing validity.
@@ -137,7 +137,7 @@ CVM's reason to exist over `switch-cuda` is removing footguns. Letting users mis
 - Revisit: extend the bundle to NCCL/cuBLAS in M4.
 
 ## Action Items
-1. [ ] Define `.cvm-meta.json` bundle schema (paired cuDNN, source, checksum).
+1. [ ] Define `.cuvm-meta.json` bundle schema (paired cuDNN, source, checksum).
 2. [ ] Build the cuDNN↔CUDA compatibility table as data, not code.
 3. [ ] Content-address the `cudnn/` store; link into version dirs.
 
@@ -186,19 +186,19 @@ The parity requirement is explicit, and the painful lesson of nvm-windows is tha
 **Deciders:** Daniel Tu
 
 ## Context
-Users (and CI/admins) already have CUDA installed via NVIDIA installers, and the GPU **driver** is a system/kernel component. CVM must not fight or destroy these.
+Users (and CI/admins) already have CUDA installed via NVIDIA installers, and the GPU **driver** is a system/kernel component. CUVM must not fight or destroy these.
 
 ## Decision
-CVM **adopts** existing toolkit installs by reference (no copy, no move) and records them in the manifest as `source: adopted`. `cvm uninstall` on an adopted install only **de-registers** it; it never deletes admin-managed files. CVM **never installs, modifies, or removes the GPU driver** — it only reads it via `nvidia-smi` for compatibility reasoning.
+CUVM **adopts** existing toolkit installs by reference (no copy, no move) and records them in the manifest as `source: adopted`. `cuvm uninstall` on an adopted install only **de-registers** it; it never deletes admin-managed files. CUVM **never installs, modifies, or removes the GPU driver** — it only reads it via `nvidia-smi` for compatibility reasoning.
 
 ## Options Considered
 
 ### Option A: Adopt-in-place + driver read-only (chosen)
 **Pros:** Safe coexistence with NVIDIA installers and shared/HPC machines; no destruction of admin state; immediate value on day one (manage what's already there).
-**Cons:** Adopted installs live outside `$CVM_HOME` (heterogeneous paths in the manifest); can't guarantee their integrity.
+**Cons:** Adopted installs live outside `$CUVM_HOME` (heterogeneous paths in the manifest); can't guarantee their integrity.
 
 ### Option B: Manage-only (ignore/migrate existing installs)
-**Pros:** Uniform `$CVM_HOME` layout; full control.
+**Pros:** Uniform `$CUVM_HOME` layout; full control.
 **Cons:** Forces re-download of multi-GB toolkits already present; hostile on shared machines; slow first-run.
 
 ### Option C: Also manage the driver
@@ -209,11 +209,11 @@ Adoption delivers the M1 "switch what you already have" value with zero download
 
 ## Consequences
 - Easier: instant utility; safe on managed machines.
-- Harder: manifest must handle mixed in-place and CVM-owned paths; `doctor` must reason about driver state it doesn't control.
+- Harder: manifest must handle mixed in-place and CUVM-owned paths; `doctor` must reason about driver state it doesn't control.
 - Revisit: never, for the driver boundary.
 
 ## Action Items
-1. [ ] Implement `cvm adopt --scan` for `/usr/local/cuda-*` and `C:\…\CUDA\v*`.
+1. [ ] Implement `cuvm adopt --scan` for `/usr/local/cuda-*` and `C:\…\CUDA\v*`.
 2. [ ] Guard `uninstall` to de-register (not delete) adopted installs.
 
 ---
@@ -228,7 +228,7 @@ Adoption delivers the M1 "switch what you already have" value with zero download
 CUDA toolkits are freely downloadable; **cuDNN has historically required an NVIDIA-account/EULA-gated download**. We want cuDNN bundling (ADR-003) but cannot assume an unauthenticated download is always permitted.
 
 ## Decision
-Support **user-supplied cuDNN archives** as the always-available path (`cvm cudnn install <file> --for <toolkit>`), and **attempt direct download only where NVIDIA's terms and endpoints allow** (e.g. redistributable channels). When direct download isn't permitted, print the exact version-matched URL, send the user to obtain it, then ingest the downloaded file.
+Support **user-supplied cuDNN archives** as the always-available path (`cuvm cudnn install <file> --for <toolkit>`), and **attempt direct download only where NVIDIA's terms and endpoints allow** (e.g. redistributable channels). When direct download isn't permitted, print the exact version-matched URL, send the user to obtain it, then ingest the downloaded file.
 
 ## Options Considered
 

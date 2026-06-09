@@ -1,0 +1,13 @@
+---
+source: crates/cuvm-platform/tests/windows_env_golden.rs
+assertion_line: 70
+expression: script
+---
+if (-not (Test-Path Variable:\__cuvm_prev_prompt)) {
+  $cmd = Get-Command prompt -ErrorAction SilentlyContinue
+  if ($cmd) { $global:__cuvm_prev_prompt = $cmd.ScriptBlock }
+}
+function global:prompt {
+  try { (& cuvm.exe use --shell powershell --quiet | Out-String) | Invoke-Expression } catch {}
+  if ($global:__cuvm_prev_prompt) { & $global:__cuvm_prev_prompt } else { "PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) " }
+}

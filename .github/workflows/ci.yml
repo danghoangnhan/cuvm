@@ -1,0 +1,73 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  lint:
+    name: fmt + clippy + test (linux/amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (stable + components)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt --check
+        run: cargo fmt --all -- --check
+      - name: clippy -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+
+  compile-all:
+    name: compile ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux/amd64
+            target: x86_64-unknown-linux-musl
+          - name: linux/arm64
+            target: aarch64-unknown-linux-gnu
+          - name: windows/amd64
+            target: x86_64-pc-windows-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (stable + target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          # Pin a real stable release. With no version the action resolved to a
+          # 0.16.0-dev build on the rotating ziglang.org/builds path, which 404s
+          # once that nightly rotates out; a pinned stable is fetched from the
+          # permanent /download/<ver> path.
+          version: 0.13.0
+      - name: Install cargo-zigbuild
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - name: cross compile cuvm binary
+        run: cargo zigbuild -p cuvm-cli --release --target ${{ matrix.target }}
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuvm-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/cuvm
+            target/${{ matrix.target }}/release/cuvm.exe
+          if-no-files-found: warn
