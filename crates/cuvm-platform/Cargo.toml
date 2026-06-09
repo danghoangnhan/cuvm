@@ -12,7 +12,10 @@ workspace = true
 [dependencies]
 cuvm-core = { path = "../cuvm-core" }
 cuvm-app = { path = "../cuvm-app" }
+cuvm-download = { path = "../cuvm-download" }
 anyhow = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
 time = { workspace = true, features = ["std"] }
 
 # The `windows` crate only links on the windows target; the gnu/linux host never
@@ -27,5 +30,8 @@ windows = { workspace = true, features = [
 [dev-dependencies]
 assert_fs = { workspace = true }
 insta = { workspace = true }
-tempfile = { workspace = true }
 predicates = { workspace = true }
+time = { workspace = true, features = ["std", "macros"] }
+tempfile = { workspace = true }
+zip = { workspace = true }
+cuvm-download = { path = "../cuvm-download" }

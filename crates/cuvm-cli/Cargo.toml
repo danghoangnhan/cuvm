@@ -20,11 +20,14 @@ path = "src/main.rs"
 [dependencies]
 cuvm-app = { path = "../cuvm-app" }
 cuvm-core = { path = "../cuvm-core" }
+cuvm-download = { path = "../cuvm-download" }
 cuvm-nvidia = { path = "../cuvm-nvidia" }
 cuvm-platform = { path = "../cuvm-platform" }
+cuvm-registry = { path = "../cuvm-registry" }
 cuvm-store = { path = "../cuvm-store" }
 clap = { workspace = true }
 anyhow = { workspace = true }
+time = { workspace = true }
 dirs = "5.0"
 
 [dev-dependencies]
@@ -32,3 +35,7 @@ assert_cmd = { workspace = true }
 assert_fs = { workspace = true }
 predicates = { workspace = true }
 insta = { workspace = true }
+httpmock = { workspace = true }
+mockall = { workspace = true }
+sha2 = { workspace = true }
+tar = { workspace = true }

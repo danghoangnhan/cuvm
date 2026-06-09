@@ -11,3 +11,12 @@ workspace = true
 
 [dependencies]
 cuvm-core = { path = "../cuvm-core" }
+cuvm-app = { path = "../cuvm-app" }
+cuvm-download = { path = "../cuvm-download" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+httpmock = { workspace = true }

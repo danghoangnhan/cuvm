@@ -11,3 +11,16 @@ workspace = true
 
 [dependencies]
 cuvm-core = { path = "../cuvm-core" }
+ureq = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tar = { workspace = true }
+lzma-rs = { workspace = true }
+# Workspace entry pins pure-Rust deflate only (no C-backed xz2/lzma-sys/bzip2-sys/
+# zstd codecs) to keep the static musl build self-contained.
+zip = { workspace = true }
+
+[dev-dependencies]
+httpmock = { workspace = true }
+tempfile = { workspace = true }
+assert_fs = { workspace = true }
