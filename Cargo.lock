@@ -613,12 +613,19 @@ dependencies = [
  "clap",
  "cuvm-app",
  "cuvm-core",
+ "cuvm-download",
  "cuvm-nvidia",
  "cuvm-platform",
+ "cuvm-registry",
  "cuvm-store",
  "dirs",
+ "httpmock",
  "insta",
+ "mockall",
  "predicates",
+ "sha2",
+ "tar",
+ "time",
 ]
 
 [[package]]

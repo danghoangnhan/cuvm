@@ -52,6 +52,22 @@ fn build_resolver(layout: &Layout) -> anyhow::Result<Box<dyn Resolver>> {
     Ok(Box::new(MemResolver::new(bundles, aliases)))
 }
 
+/// Base URL for the NVIDIA redist registry, overridable via `CUVM_REGISTRY_URL`
+/// (tests point this at an `httpmock` server). Trailing slash is required because
+/// artifact URLs are formed as `base_url + relative_path`.
+#[must_use]
+pub fn registry_base_url() -> String {
+    std::env::var("CUVM_REGISTRY_URL").unwrap_or_else(|_| {
+        "https://developer.download.nvidia.com/compute/cuda/redist/".to_string()
+    })
+}
+
+/// The download cache directory: `$CUVM_HOME/cache`.
+#[must_use]
+pub fn cache_dir(home: &std::path::Path) -> PathBuf {
+    home.join("cache")
+}
+
 /// Resolve `CUVM_HOME` from the environment, with `~/.cuvm` as fallback.
 #[must_use]
 pub fn cuvm_home() -> PathBuf {
@@ -78,5 +94,32 @@ fn host_os() -> Os {
     #[cfg(not(windows))]
     {
         Os::Linux
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_base_url_defaults_to_nvidia_redist() {
+        std::env::remove_var("CUVM_REGISTRY_URL");
+        assert_eq!(
+            registry_base_url(),
+            "https://developer.download.nvidia.com/compute/cuda/redist/"
+        );
+    }
+
+    #[test]
+    fn registry_base_url_env_override_wins() {
+        std::env::set_var("CUVM_REGISTRY_URL", "http://127.0.0.1:9/redist/");
+        assert_eq!(registry_base_url(), "http://127.0.0.1:9/redist/");
+        std::env::remove_var("CUVM_REGISTRY_URL");
+    }
+
+    #[test]
+    fn cache_dir_is_under_home() {
+        let dir = cache_dir(std::path::Path::new("/tmp/cuvmhome"));
+        assert_eq!(dir, std::path::Path::new("/tmp/cuvmhome/cache"));
     }
 }
