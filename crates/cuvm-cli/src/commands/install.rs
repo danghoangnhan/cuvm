@@ -16,7 +16,7 @@ use cuvm_core::{current_platform, Driver, GpuClass, Os, Source, Version, Version
 /// Result of installing a single spec; drives the per-target change line and the
 /// aggregate summary (§5.1/§5.4 of the spec).
 #[derive(Debug)]
-pub enum InstallOutcome {
+pub(crate) enum InstallOutcome {
     /// Freshly installed (no prior bundle for this handle).
     Installed {
         handle: String,
@@ -184,10 +184,12 @@ pub fn run_install(
     Ok(i32::from(failed > 0))
 }
 
-/// `cuvm install <ver> [--force]`: resolve newest patch, compat-gate, acquire,
-/// verify, extract, place, smoke-test, then record a `Downloaded` manifest bundle.
-///
-/// `cudnn`/`no_cudnn` are accepted but ignored in M2 (cuDNN pairing is M3).
+/// Install a single resolved spec: resolve newest patch, short-circuit if already
+/// installed (unless `reinstall`), compat-gate, acquire, verify, extract, place,
+/// smoke-test, then record a `Downloaded` manifest bundle. Returns the
+/// [`InstallOutcome`] (`AlreadyPresent` / `Installed` / `Reinstalled`, or
+/// `Adopted` on the Windows degrade path) for the caller to render; it prints
+/// nothing itself.
 ///
 /// # Errors
 /// Returns an error if resolution, the compat gate (without `--force`), download,
