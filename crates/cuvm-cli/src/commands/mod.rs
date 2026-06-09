@@ -402,17 +402,17 @@ fn build_pipeline_installer(home: &std::path::Path) -> Box<dyn cuvm_app::Install
             os: Os::Linux,
             arch: Arch::X86_64,
         };
-        Box::new(cuvm_platform::unix::UnixInstaller::with_cache_dir(
-            cache, platform,
-        ))
+        Box::new(
+            cuvm_platform::unix::UnixInstaller::with_cache_dir(cache, platform)
+                .with_reporter(crate::reporter::CliReporter::shared()),
+        )
     }
     #[cfg(not(unix))]
     {
         let dest_base = home.join("versions");
-        Box::new(cuvm_platform::windows::WindowsInstaller::with_paths(
-            cache,
-            dest_base,
-            vec![],
-        ))
+        Box::new(
+            cuvm_platform::windows::WindowsInstaller::with_paths(cache, dest_base, vec![])
+                .with_reporter(crate::reporter::CliReporter::shared()),
+        )
     }
 }
