@@ -25,9 +25,15 @@ impl Default for SmiProbe {
 }
 
 impl SmiProbe {
+    /// Build a probe, honouring the `CUVM_NVIDIA_SMI` env override (used by the
+    /// install e2e to inject a fake `nvidia-smi` so the compat gate can be
+    /// exercised without a real GPU) over the default `nvidia-smi` binary name.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        match std::env::var("CUVM_NVIDIA_SMI") {
+            Ok(bin) if !bin.is_empty() => SmiProbe { binary: bin },
+            _ => Self::default(),
+        }
     }
 
     /// Override the binary path/name (used by tests with a fake script).
@@ -209,6 +215,18 @@ mod tests {
             .expect("probe must not error when smi absent");
         assert!(!d.present, "absent nvidia-smi must yield present=false");
         assert_eq!(d.gpu_class, GpuClass::Unknown);
+    }
+
+    #[test]
+    fn new_honors_cuvm_nvidia_smi_env_override() {
+        // The composition root builds the probe via `SmiProbe::new()`; an env
+        // override lets the install e2e inject a fake driver without a GPU.
+        std::env::set_var("CUVM_NVIDIA_SMI", "/some/fake/nvidia-smi-xyz");
+        let probe = SmiProbe::new();
+        assert_eq!(probe.binary, "/some/fake/nvidia-smi-xyz");
+        std::env::remove_var("CUVM_NVIDIA_SMI");
+        // Without the override, the default binary name is restored.
+        assert_eq!(SmiProbe::new().binary, "nvidia-smi");
     }
 
     #[cfg(unix)]
