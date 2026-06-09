@@ -347,7 +347,7 @@ fn degrade_to_adopt(
     inventory: &dyn Inventory,
     handle: &str,
     reason: &str,
-) -> Result<()> {
+) -> Result<InstallOutcome> {
     eprintln!("cuvm: warning: {reason}; falling back to adopt-only.");
     let candidates = installer.scan()?;
     let candidate = candidates
@@ -372,12 +372,10 @@ fn degrade_to_adopt(
     manifest.bundles.retain(|b| b.version != record.version);
     manifest.bundles.push(record);
     inventory.save(&manifest)?;
-    println!(
-        "adopted {} ({})",
-        bundle.toolkit.version.raw,
-        bundle.toolkit.root.display()
-    );
-    Ok(())
+    Ok(InstallOutcome::Adopted {
+        handle: bundle.toolkit.version.raw.clone(),
+        path: bundle.toolkit.root,
+    })
 }
 
 /// Whether `version` satisfies `spec` (exact `X.Y.Z`, minor `X.Y`, major `X`, or

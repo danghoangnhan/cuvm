@@ -11,7 +11,7 @@ Commands:
   adopt      Discover and register existing CUDA toolkits in place
   ls         List installed/adopted bundles
   ls-remote  List toolkit versions available in the remote registry
-  install    Download and install a CUDA toolkit version
+  install    Download and install one or more CUDA toolkit versions
   current    Print the currently active bundle handle
   which      Print the absolute toolkit root for a spec
   use        Print env-activation code for a spec (shim evals it)
