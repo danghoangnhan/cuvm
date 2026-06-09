@@ -7,6 +7,7 @@ pub mod default;
 pub mod doctor;
 pub mod env;
 pub mod hook;
+pub mod install;
 pub mod pin;
 pub mod r#use;
 pub mod which;
@@ -128,6 +129,12 @@ pub enum Command {
     },
     /// List installed/adopted bundles.
     Ls,
+    /// List toolkit versions available in the remote registry.
+    LsRemote {
+        /// List cuDNN versions instead (M2: parsed but a no-op; listing lands in M3).
+        #[arg(long)]
+        cudnn: bool,
+    },
     /// Print the currently active bundle handle.
     Current,
     /// Print the absolute toolkit root for a spec.
@@ -194,6 +201,11 @@ impl Command {
             }
             Command::Ls => {
                 run_ls(deps)?;
+                Ok(0)
+            }
+            Command::LsRemote { cudnn: _ } => {
+                let registry = build_registry();
+                install::run_ls_remote(registry.as_ref())?;
                 Ok(0)
             }
             Command::Current => {
@@ -264,6 +276,15 @@ fn build_installer() -> Box<dyn cuvm_app::Installer> {
         ));
     }
     cuvm_platform::new_installer(cuvm_core::Os::Linux)
+}
+
+/// Build the registry client, honouring `CUVM_REGISTRY_URL` (tests/CI) over the
+/// NVIDIA default. The composition root is the only place that knows the concrete
+/// `DefaultRegistryClient`.
+fn build_registry() -> Box<dyn cuvm_app::RegistryClient> {
+    Box::new(cuvm_registry::DefaultRegistryClient::with_base_url(
+        crate::composition::registry_base_url(),
+    ))
 }
 
 /// `ls` implementation using `Deps` (marks default alias with `*`).
