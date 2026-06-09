@@ -100,9 +100,17 @@ fn host_os() -> Os {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes the tests that mutate the process-global `CUVM_REGISTRY_URL`,
+    /// so they cannot race each other under cargo's parallel test threads.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn registry_base_url_defaults_to_nvidia_redist() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::env::remove_var("CUVM_REGISTRY_URL");
         assert_eq!(
             registry_base_url(),
@@ -112,6 +120,9 @@ mod tests {
 
     #[test]
     fn registry_base_url_env_override_wins() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::env::set_var("CUVM_REGISTRY_URL", "http://127.0.0.1:9/redist/");
         assert_eq!(registry_base_url(), "http://127.0.0.1:9/redist/");
         std::env::remove_var("CUVM_REGISTRY_URL");
