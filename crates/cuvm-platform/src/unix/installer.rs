@@ -224,8 +224,49 @@ impl Installer for UnixInstaller {
             .with_context(|| format!("atomic rename {} -> {}", tmp.display(), dst.display()))?;
         Ok(())
     }
-    fn smoke_test(&self, _root: &Path) -> Result<()> {
-        Err(not_impl("UnixInstaller::smoke_test"))
+    fn smoke_test(&self, root: &Path) -> Result<()> {
+        let nvcc = root.join("bin").join("nvcc");
+        if !nvcc.is_file() {
+            anyhow::bail!(
+                "smoke test: nvcc not found at {} (install is missing bin/nvcc)",
+                nvcc.display()
+            );
+        }
+
+        // Tiny program that pulls in the cudart runtime so linking must resolve
+        // -lcudart through <root>/lib64 (catches the missing lib64 symlink) and
+        // exercises the external host gcc/g++ that nvcc drives.
+        let scratch = tempfile::tempdir().context("creating smoke-test scratch dir")?;
+        let src = scratch.path().join("cuvm_smoke.cu");
+        let out = scratch.path().join("cuvm_smoke");
+        std::fs::write(
+            &src,
+            "#include <cuda_runtime.h>\n\
+             int main() { int n = 0; cudaGetDeviceCount(&n); return 0; }\n",
+        )
+        .context("writing smoke-test source")?;
+
+        let lib64 = root.join("lib64");
+        let output = std::process::Command::new(&nvcc)
+            .arg(&src)
+            .arg("-o")
+            .arg(&out)
+            .arg(format!("-L{}", lib64.display()))
+            .arg("-lcudart")
+            .output()
+            .with_context(|| format!("running {}", nvcc.display()))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "smoke test compile+link failed (nvcc exit {}):\n{}\n\
+                 hint: an incompatible host gcc/g++ is the usual cause — retry with \
+                 `--allow-unsupported-compiler` or point nvcc at a supported compiler via `-ccbin <path>`.",
+                output.status.code().unwrap_or(-1),
+                stderr.trim_end()
+            );
+        }
+        Ok(())
     }
     fn ingest_supplied(&self, _file: &Path, _kind: ArtifactKind) -> Result<PathBuf> {
         Err(not_impl("UnixInstaller::ingest_supplied"))

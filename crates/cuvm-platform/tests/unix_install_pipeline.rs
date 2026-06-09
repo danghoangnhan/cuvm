@@ -185,3 +185,78 @@ fn place_is_never_partial_when_dst_parent_missing() {
     assert!(!dst.exists(), "dst must not exist after a failed place");
     let _ = err; // an error is required; its text is impl-defined.
 }
+
+#[cfg(unix)]
+fn write_exec(path: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::write(path, body).unwrap();
+    let mut perms = fs::metadata(path).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).unwrap();
+}
+
+#[test]
+fn smoke_test_errors_clearly_when_nvcc_is_absent() {
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path().join("12.4.1");
+    fs::create_dir_all(root.join("bin")).unwrap(); // no nvcc inside
+    let err = installer().smoke_test(&root).unwrap_err();
+    let msg = err.to_string().to_lowercase();
+    assert!(
+        msg.contains("nvcc") && (msg.contains("not found") || msg.contains("missing")),
+        "{msg}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn smoke_test_surfaces_host_gcc_breakage_with_hint() {
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path().join("12.4.1");
+    fs::create_dir_all(root.join("bin")).unwrap();
+    // Stub nvcc that emulates an incompatible host compiler rejection.
+    write_exec(
+        &root.join("bin/nvcc"),
+        "#!/bin/sh\n\
+         echo 'unsupported GNU version! gcc versions later than 13 are not supported' 1>&2\n\
+         exit 1\n",
+    );
+    let err = installer().smoke_test(&root).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("unsupported GNU version"),
+        "must surface nvcc/host-gcc stderr: {msg}"
+    );
+    assert!(
+        msg.contains("--allow-unsupported-compiler") || msg.contains("-ccbin"),
+        "must include the host-gcc hint: {msg}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn smoke_test_passes_with_a_stub_nvcc_that_succeeds() {
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path().join("12.4.1");
+    fs::create_dir_all(root.join("bin")).unwrap();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    // Stub nvcc that "compiles" by writing the requested -o output and exiting 0.
+    write_exec(
+        &root.join("bin/nvcc"),
+        "#!/bin/sh\nout=''\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = \"-o\" ]; then shift; out=\"$1\"; fi\n  shift\ndone\nif [ -n \"$out\" ]; then : > \"$out\"; fi\nexit 0\n",
+    );
+    installer()
+        .smoke_test(&root)
+        .expect("succeeding nvcc => smoke test passes");
+}
+
+#[ignore = "requires a real nvcc + host gcc; run with CUVM_SMOKE=1"]
+#[test]
+fn smoke_test_real_nvcc_compile_link() {
+    let root = PathBuf::from(
+        std::env::var("CUVM_REAL_ROOT").expect("set CUVM_REAL_ROOT to a real toolkit"),
+    );
+    installer()
+        .smoke_test(&root)
+        .expect("real toolkit must compile+link cudart");
+}
