@@ -1,19 +1,14 @@
 //! cuvm-download — ureq+rustls fetch, sha256, tar.xz / zip extract (zip-slip guard).
 //!
-//! Real downloader/extractor lands in WU-11/WU-12. WU-0 placeholder only.
+//! Module map (kept stable so WU-12's `extract` module slots in cleanly):
+//! - [`error`]    — the shared [`DownloadError`].
+//! - [`http`]     — bare `http_get` for small JSON/HTML.
+//! - [`download`] — `sha256_file` + the resumable, verifying [`Downloader`].
 
 #![forbid(unsafe_code)]
 
-/// Scaffold marker. Replaced by the downloader in WU-11.
-#[must_use]
-pub fn placeholder() -> &'static str {
-    "cuvm-download"
-}
+pub mod download;
+pub mod error;
+pub mod http;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn placeholder_names_the_crate() {
-        assert_eq!(super::placeholder(), "cuvm-download");
-    }
-}
+pub use error::{DownloadError, Result};

@@ -11,3 +11,11 @@ workspace = true
 
 [dependencies]
 cuvm-core = { path = "../cuvm-core" }
+ureq = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+httpmock = { workspace = true }
+tempfile = { workspace = true }
+assert_fs = { workspace = true }
