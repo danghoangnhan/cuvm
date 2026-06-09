@@ -6,6 +6,7 @@
 
 use std::process::Command;
 
+use cuvm_app::DriverProbe;
 use cuvm_core::domain::{Arch, Os, Platform};
 use cuvm_core::version::Version;
 use cuvm_core::{Driver, GpuClass};
@@ -44,7 +45,7 @@ impl SmiProbe {
     /// `nvidia-smi` absence (e.g. internal parse errors that should never
     /// occur with well-formed output). Absent or non-zero-exit `nvidia-smi`
     /// yields `Driver { present: false }` without an error.
-    pub fn probe(&self) -> anyhow::Result<Driver> {
+    pub fn probe_driver(&self) -> anyhow::Result<Driver> {
         let plat = host_platform();
         let output = Command::new(&self.binary)
             .args(["--query-gpu=driver_version,name", "--format=csv,noheader"])
@@ -93,6 +94,12 @@ fn host_platform() -> Platform {
         Arch::X86_64
     };
     Platform { os, arch }
+}
+
+impl DriverProbe for SmiProbe {
+    fn probe(&self) -> anyhow::Result<Driver> {
+        self.probe_driver()
+    }
 }
 
 /// Pure parser for one `nvidia-smi` CSV row: `<driver_version>, <gpu name>`.
@@ -197,7 +204,9 @@ mod tests {
     fn probe_returns_driver_unknown_when_smi_missing() {
         // Point at a binary that does not exist -> graceful absent, never a crash.
         let probe = SmiProbe::with_binary("definitely-not-nvidia-smi-xyz");
-        let d = probe.probe().expect("probe must not error when smi absent");
+        let d = probe
+            .probe_driver()
+            .expect("probe must not error when smi absent");
         assert!(!d.present, "absent nvidia-smi must yield present=false");
         assert_eq!(d.gpu_class, GpuClass::Unknown);
     }
@@ -221,7 +230,7 @@ mod tests {
         std::fs::set_permissions(&fake, perms).unwrap();
 
         let probe = SmiProbe::with_binary(fake.to_str().unwrap());
-        let d = probe.probe().unwrap();
+        let d = probe.probe_driver().unwrap();
         assert!(d.present);
         assert_eq!(d.version, Version::parse("550.54.14").unwrap());
         assert_eq!(d.gpu_class, GpuClass::GeForce);
