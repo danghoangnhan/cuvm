@@ -287,17 +287,63 @@ impl cuvm_app::RegistryClient for DefaultRegistryClient {
 }
 
 impl DefaultRegistryClient {
-    // Temporary placeholder replaced by the real implementation in Task 10.5; the
-    // allows below keep this transient stub clippy-clean until then.
-    #[allow(clippy::unused_self, clippy::unnecessary_wraps)]
+    /// Fetch `redistrib_<v>.json`, choose the component set, and emit one
+    /// [`cuvm_app::Artifact`] per `(component, platform)` with `url` = base + path.
     fn resolve_toolkit_impl(
         &self,
-        _v: &Version,
-        _p: Platform,
-        _want: &cuvm_app::ComponentPolicy,
+        v: &Version,
+        p: Platform,
+        want: &cuvm_app::ComponentPolicy,
     ) -> RegistryResult<Vec<cuvm_app::Artifact>> {
-        // Implemented in Task 10.5.
-        Ok(Vec::new())
+        let manifest_url = format!("{}redistrib_{}.json", self.base_url, v.raw);
+        let body = Self::get_text(&manifest_url)?;
+        let manifest = RedistManifest::parse(&body)?;
+
+        let names: Vec<String> = match want {
+            cuvm_app::ComponentPolicy::Recommended => {
+                recommended_components(v.major(), &manifest.components)
+            }
+            cuvm_app::ComponentPolicy::Only(list) => list
+                .iter()
+                .filter(|n| manifest.components.contains_key(n.as_str()))
+                .cloned()
+                .collect(),
+        };
+
+        if names.is_empty() {
+            let wanted = match want {
+                cuvm_app::ComponentPolicy::Recommended => "recommended set".to_string(),
+                cuvm_app::ComponentPolicy::Only(list) => list.join(", "),
+            };
+            return Err(RegistryError::NoComponents { wanted });
+        }
+
+        let platform_key = p.redist_key();
+        let mut artifacts = Vec::with_capacity(names.len());
+        for name in names {
+            // `name` was filtered to present keys above, so this lookup succeeds.
+            let component =
+                manifest
+                    .component(&name)
+                    .ok_or_else(|| RegistryError::NoComponents {
+                        wanted: name.clone(),
+                    })?;
+            let redist = component.platforms.get(&platform_key).ok_or_else(|| {
+                RegistryError::MissingPlatform {
+                    component: name.clone(),
+                    platform: platform_key.clone(),
+                }
+            })?;
+            artifacts.push(cuvm_app::Artifact {
+                component: name,
+                relative_path: redist.relative_path.clone(),
+                url: format!("{}{}", self.base_url, redist.relative_path),
+                sha256: redist.sha256.clone(),
+                md5: redist.md5.clone(),
+                size: redist.size,
+            });
+        }
+        Ok(artifacts)
     }
 }
 
