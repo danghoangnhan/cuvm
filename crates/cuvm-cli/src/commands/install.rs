@@ -18,14 +18,23 @@ use cuvm_core::{current_platform, Driver, GpuClass, Os, Source, Version, Version
 #[derive(Debug)]
 pub enum InstallOutcome {
     /// Freshly installed (no prior bundle for this handle).
-    Installed { handle: String, path: std::path::PathBuf },
+    Installed {
+        handle: String,
+        path: std::path::PathBuf,
+    },
     /// Re-installed over an existing bundle (`--reinstall`).
-    Reinstalled { handle: String, path: std::path::PathBuf },
+    Reinstalled {
+        handle: String,
+        path: std::path::PathBuf,
+    },
     /// Already present and `--reinstall` not passed: a no-op.
     AlreadyPresent { handle: String },
     /// Windows-only: the download path degraded to read-only adopt (spec §2.2).
     #[cfg(not(unix))]
-    Adopted { handle: String, path: std::path::PathBuf },
+    Adopted {
+        handle: String,
+        path: std::path::PathBuf,
+    },
 }
 
 /// `cuvm ls-remote`: print available toolkit versions, newest first.
@@ -124,26 +133,33 @@ pub fn run_install(
     force: bool,
 ) -> Result<i32> {
     let started = std::time::Instant::now();
-    let mut installed: Vec<String> = Vec::new();
+    let mut changed: Vec<String> = Vec::new();
     let mut failed = 0usize;
 
     for spec in specs {
         match install_one(
-            registry, installer, inventory, engine, driver_probe, version_dir, spec, reinstall,
+            registry,
+            installer,
+            inventory,
+            engine,
+            driver_probe,
+            version_dir,
+            spec,
+            reinstall,
             force,
         ) {
             Ok(InstallOutcome::Installed { handle, path }) => {
                 println!("+ cuda {handle}  ->  {}", path.display());
-                installed.push(handle);
+                changed.push(handle);
             }
             Ok(InstallOutcome::Reinstalled { handle, path }) => {
                 println!("~ cuda {handle}  ->  {}", path.display());
-                installed.push(handle);
+                changed.push(handle);
             }
             #[cfg(not(unix))]
             Ok(InstallOutcome::Adopted { handle, path }) => {
                 println!("+ cuda {handle} (adopted)  ->  {}", path.display());
-                installed.push(handle);
+                changed.push(handle);
             }
             Ok(InstallOutcome::AlreadyPresent { handle }) => {
                 eprintln!("cuvm: {handle} is already installed");
@@ -156,13 +172,13 @@ pub fn run_install(
     }
 
     let elapsed = started.elapsed().as_secs_f64();
-    match installed.len() {
+    match changed.len() {
         0 => {
             if failed == 0 && specs.len() > 1 {
                 eprintln!("cuvm: all requested versions already installed");
             }
         }
-        1 => eprintln!("Installed CUDA {} in {elapsed:.1}s", installed[0]),
+        1 => eprintln!("Installed CUDA {} in {elapsed:.1}s", changed[0]),
         n => eprintln!("Installed {n} toolkits in {elapsed:.1}s"),
     }
     Ok(i32::from(failed > 0))

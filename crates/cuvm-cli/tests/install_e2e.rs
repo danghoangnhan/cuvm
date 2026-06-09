@@ -328,24 +328,35 @@ fn install_is_idempotent_and_reinstall_forces() {
     let run = || {
         let mut c = cuvm();
         c.env("CUVM_HOME", home.path())
-            .env("CUVM_REGISTRY_URL", format!("{}/redist/", server.base_url()))
+            .env(
+                "CUVM_REGISTRY_URL",
+                format!("{}/redist/", server.base_url()),
+            )
             .env("CUVM_SKIP_SMOKE", "1");
         c
     };
 
     // First install: a change line on stdout.
-    run().args(["install", "12.4", "--no-cudnn"])
-        .assert().success().stdout(contains("cuda 12.4.1"));
+    run()
+        .args(["install", "12.4", "--no-cudnn"])
+        .assert()
+        .success()
+        .stdout(contains("cuda 12.4.1"));
 
     // Second install: no-op, message on stderr, no new change line on stdout.
-    run().args(["install", "12.4", "--no-cudnn"])
-        .assert().success()
+    run()
+        .args(["install", "12.4", "--no-cudnn"])
+        .assert()
+        .success()
         .stderr(contains("12.4.1 is already installed"))
         .stdout(contains("cuda 12.4.1").not());
 
     // --reinstall: re-runs, emitting the `~` change line.
-    run().args(["install", "12.4", "--no-cudnn", "--reinstall"])
-        .assert().success().stdout(contains("~ cuda 12.4.1"));
+    run()
+        .args(["install", "12.4", "--no-cudnn", "--reinstall"])
+        .assert()
+        .success()
+        .stdout(contains("~ cuda 12.4.1"));
 }
 
 #[cfg(unix)]
@@ -358,7 +369,10 @@ fn multi_install_continues_past_failure_and_exits_nonzero() {
 
     cuvm()
         .env("CUVM_HOME", home.path())
-        .env("CUVM_REGISTRY_URL", format!("{}/redist/", server.base_url()))
+        .env(
+            "CUVM_REGISTRY_URL",
+            format!("{}/redist/", server.base_url()),
+        )
         .env("CUVM_SKIP_SMOKE", "1")
         .args(["install", "12.4", "99.9", "--no-cudnn"])
         .assert()
@@ -367,5 +381,6 @@ fn multi_install_continues_past_failure_and_exits_nonzero() {
         .stderr(contains("error installing 99.9"));
 
     // The good target really landed.
-    home.child("versions/12.4.1/bin/nvcc").assert(predicates::path::exists());
+    home.child("versions/12.4.1/bin/nvcc")
+        .assert(predicates::path::exists());
 }
