@@ -35,6 +35,8 @@ struct Row {
     installed: bool,
     source: Option<&'static str>, // "downloaded" | "adopted"
     path: Option<String>,
+    components: Vec<String>,
+    installed_at: Option<String>, // RFC3339; `None` for available-not-installed rows
     is_default: bool,
 }
 
@@ -58,6 +60,11 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
                 cuvm_core::Source::Adopted => "adopted",
                 _ => "downloaded",
             };
+            let installed_at = b
+                .toolkit
+                .installed_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .ok();
             rows.insert(
                 handle.clone(),
                 Row {
@@ -66,6 +73,8 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
                     installed: true,
                     source: Some(source),
                     path: Some(b.toolkit.root.display().to_string()),
+                    components: b.toolkit.components.clone(),
+                    installed_at,
                     is_default: default.as_deref() == Some(handle.as_str()),
                 },
             );
@@ -100,6 +109,8 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
                         installed: false,
                         source: None,
                         path: None,
+                        components: Vec::new(),
+                        installed_at: None,
                         is_default: false,
                     });
                 }
@@ -189,6 +200,8 @@ fn print_json(list: &[Row]) {
                 "path": r.path,
                 "url": if r.installed { serde_json::Value::Null } else { redist_url(&r.version).into() },
                 "default": r.is_default,
+                "components": r.components,
+                "installed_at": r.installed_at,
             })
         })
         .collect();

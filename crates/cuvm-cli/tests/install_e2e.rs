@@ -412,17 +412,13 @@ fn unified_ls_shows_installed_and_available() {
             .env("CUVM_SKIP_SMOKE", "1");
     };
 
-    // Install warms the cache + lands 12.4.1.
+    // Install warms the redist-index cache (§6.2) + lands 12.4.1, so a plain
+    // `ls` (no --refresh) already sees both index entries — no cold-cache hint.
     let mut c = cuvm();
     envs(&mut c);
     c.args(["install", "12.4", "--no-cudnn"]).assert().success();
 
-    // ls --refresh forces a fresh fetch so both index entries are cached.
-    let mut c = cuvm();
-    envs(&mut c);
-    c.args(["ls", "--refresh"]).assert().success();
-
-    // Unified ls: 12.4.1 installed (path), 12.6.0 available.
+    // Unified ls (no --refresh): 12.4.1 installed (path), 12.6.0 available.
     let mut c = cuvm();
     envs(&mut c);
     c.arg("ls")
@@ -446,11 +442,22 @@ fn unified_ls_shows_installed_and_available() {
     let out = c.args(["ls", "--output-format", "json"]).assert().success();
     let json: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
     let arr = json.as_array().unwrap();
-    let installed_124 = arr
-        .iter()
-        .any(|e| e["version"] == "12.4.1" && e["installed"] == true);
-    let avail_126 = arr
-        .iter()
-        .any(|e| e["version"] == "12.6.0" && e["installed"] == false);
-    assert!(installed_124 && avail_126, "{json}");
+    let installed_124 = arr.iter().find(|e| e["version"] == "12.4.1").unwrap();
+    assert_eq!(installed_124["installed"], true, "{json}");
+    // §5.5: installed rows carry `components` (array) and a non-null `installed_at`.
+    assert!(
+        installed_124["components"].is_array(),
+        "installed 12.4.1 must have a components array: {json}"
+    );
+    assert!(
+        !installed_124["installed_at"].is_null(),
+        "installed 12.4.1 must have a non-null installed_at: {json}"
+    );
+    let avail_126 = arr.iter().find(|e| e["version"] == "12.6.0").unwrap();
+    assert_eq!(avail_126["installed"], false, "{json}");
+    // §5.5: available-not-installed rows have `installed_at: null`.
+    assert!(
+        avail_126["installed_at"].is_null(),
+        "available 12.6.0 must have installed_at: null: {json}"
+    );
 }
