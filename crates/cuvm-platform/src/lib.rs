@@ -80,10 +80,9 @@ mod tests {
 
     #[test]
     fn factory_dispatches_installer_by_os() {
-        // Linux scan now works (scan_root /usr/local may be empty, but does not error).
-        // Just confirm the factory returns a usable installer for each OS.
+        // Both backends now produce a usable installer; scan() succeeds (possibly
+        // empty on a host with no CUDA install) rather than erroring (WU-9).
         let _linux = new_installer(Os::Linux);
-        let win_err = new_installer(Os::Windows).scan().unwrap_err().to_string();
-        assert!(win_err.contains("WindowsInstaller"));
+        assert!(new_installer(Os::Windows).scan().is_ok());
     }
 }
