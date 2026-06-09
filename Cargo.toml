@@ -34,7 +34,9 @@ ureq = { version = "2.10", features = ["tls"] }
 sha2 = "0.10"
 tar = "0.4"
 lzma-rs = "0.3"
-zip = "2.2"
+# Pure-Rust deflate only (no C-backed xz2/lzma-sys/bzip2-sys/zstd codecs), so the
+# static musl build stays fully self-contained; members opt into codecs as needed.
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
 insta = "1.40"
 assert_cmd = "2.0"
