@@ -347,3 +347,25 @@ fn install_is_idempotent_and_reinstall_forces() {
     run().args(["install", "12.4", "--no-cudnn", "--reinstall"])
         .assert().success().stdout(contains("~ cuda 12.4.1"));
 }
+
+#[cfg(unix)]
+#[test]
+fn multi_install_continues_past_failure_and_exits_nonzero() {
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    let server = MockServer::start();
+    serve_redist_124(&server, fixtures.path());
+
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .env("CUVM_REGISTRY_URL", format!("{}/redist/", server.base_url()))
+        .env("CUVM_SKIP_SMOKE", "1")
+        .args(["install", "12.4", "99.9", "--no-cudnn"])
+        .assert()
+        .failure() // 99.9 has no match => exit 1
+        .stdout(contains("cuda 12.4.1")) // the good target still installed
+        .stderr(contains("error installing 99.9"));
+
+    // The good target really landed.
+    home.child("versions/12.4.1/bin/nvcc").assert(predicates::path::exists());
+}
