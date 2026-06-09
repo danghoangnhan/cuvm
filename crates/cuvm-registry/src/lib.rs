@@ -128,6 +128,45 @@ impl RedistManifest {
     }
 }
 
+/// The minimal usable component set for a CUDA `major`, filtered to what is actually
+/// present in the parsed manifest (so missing components are dropped, never invented).
+///
+/// - 12.x ⇒ `cuda_nvcc`, `cuda_cudart`, `cuda_nvrtc`.
+/// - 13.x ⇒ `cuda_nvcc`, `cuda_cudart`, `cuda_crt`, the CCCL component (`cccl` at
+///   13.3+, else `cuda_cccl`), `libnvvm`, `cuda_nvrtc`.
+///
+/// The CCCL key is resolved dynamically from `present`, handling the 13.3 rename.
+#[must_use]
+pub fn recommended_components(
+    cuda_major: u32,
+    present: &BTreeMap<String, RedistComponent>,
+) -> Vec<String> {
+    let wanted: Vec<&str> = if cuda_major >= 13 {
+        // Prefer the new `cccl` spelling, fall back to the pre-13.3 `cuda_cccl`.
+        let cccl = if present.contains_key("cccl") {
+            "cccl"
+        } else {
+            "cuda_cccl"
+        };
+        vec![
+            "cuda_nvcc",
+            "cuda_cudart",
+            "cuda_crt",
+            cccl,
+            "libnvvm",
+            "cuda_nvrtc",
+        ]
+    } else {
+        vec!["cuda_nvcc", "cuda_cudart", "cuda_nvrtc"]
+    };
+
+    wanted
+        .into_iter()
+        .filter(|name| present.contains_key(*name))
+        .map(String::from)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +299,92 @@ mod manifest_tests {
     fn parse_rejects_non_json() {
         let err = RedistManifest::parse("<html>not json</html>").unwrap_err();
         assert!(matches!(err, RegistryError::Parse(_)));
+    }
+}
+
+#[cfg(test)]
+mod recommended_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn present(keys: &[&str]) -> BTreeMap<String, RedistComponent> {
+        keys.iter()
+            .map(|k| {
+                (
+                    (*k).to_string(),
+                    RedistComponent {
+                        name: None,
+                        version: None,
+                        license: None,
+                        platforms: BTreeMap::new(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn twelve_x_is_nvcc_cudart_nvrtc() {
+        let p = present(&["cuda_nvcc", "cuda_cudart", "cuda_nvrtc", "libcublas"]);
+        let got = recommended_components(12, &p);
+        assert_eq!(got, vec!["cuda_nvcc", "cuda_cudart", "cuda_nvrtc"]);
+    }
+
+    #[test]
+    fn thirteen_three_uses_cccl_rename() {
+        // 13.3 spells CCCL as `cccl`.
+        let p = present(&[
+            "cuda_nvcc",
+            "cuda_cudart",
+            "cuda_crt",
+            "cccl",
+            "libnvvm",
+            "cuda_nvrtc",
+        ]);
+        let got = recommended_components(13, &p);
+        assert_eq!(
+            got,
+            vec![
+                "cuda_nvcc",
+                "cuda_cudart",
+                "cuda_crt",
+                "cccl",
+                "libnvvm",
+                "cuda_nvrtc"
+            ]
+        );
+    }
+
+    #[test]
+    fn thirteen_zero_uses_cuda_cccl_rename() {
+        // 13.0–13.2 spell CCCL as `cuda_cccl`; the resolver must pick the present key.
+        let p = present(&[
+            "cuda_nvcc",
+            "cuda_cudart",
+            "cuda_crt",
+            "cuda_cccl",
+            "libnvvm",
+            "cuda_nvrtc",
+        ]);
+        let got = recommended_components(13, &p);
+        assert_eq!(
+            got,
+            vec![
+                "cuda_nvcc",
+                "cuda_cudart",
+                "cuda_crt",
+                "cuda_cccl",
+                "libnvvm",
+                "cuda_nvrtc"
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_components_are_skipped() {
+        // manifest lacks cuda_nvrtc → it is dropped, not invented.
+        let p = present(&["cuda_nvcc", "cuda_cudart"]);
+        let got = recommended_components(12, &p);
+        assert_eq!(got, vec!["cuda_nvcc", "cuda_cudart"]);
     }
 }
