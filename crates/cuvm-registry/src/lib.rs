@@ -47,6 +47,87 @@ pub enum RegistryError {
 /// `Result` alias for registry operations.
 pub type RegistryResult<T> = Result<T, RegistryError>;
 
+use std::collections::BTreeMap;
+
+use serde::Deserialize;
+
+/// One redist platform object — mirrors a single `{relative_path, sha256, md5?, size}`
+/// entry under a component. `md5` is optional (some components omit it).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct RedistArtifact {
+    /// Path under the redist base URL, copied verbatim (never reconstructed).
+    pub relative_path: String,
+    /// Hex SHA-256 from the manifest; always verified before use.
+    pub sha256: String,
+    /// Optional hex MD5 from the manifest.
+    #[serde(default)]
+    pub md5: Option<String>,
+    /// Compressed artifact size in bytes.
+    pub size: u64,
+}
+
+/// One redist component (e.g. `cuda_nvcc`). Per-platform objects are flattened into
+/// `platforms`, keyed by redist platform key (`linux-x86_64`, `windows-x86_64`, …).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct RedistComponent {
+    /// Human-readable component name, if present.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Component version string (independent within a release), if present.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// License label, if present.
+    #[serde(default)]
+    pub license: Option<String>,
+    /// Per-platform artifacts; any unknown string scalars (`name`/`version`/…) are
+    /// captured above, so `flatten` here only collects the platform objects.
+    #[serde(flatten)]
+    pub platforms: BTreeMap<String, RedistArtifact>,
+}
+
+/// A parsed `redistrib_<ver>.json`. Only object-valued top-level keys become
+/// components; metadata string keys (`release_date`, `release_label`, …) are dropped.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RedistManifest {
+    /// Components keyed by their redist name, ordered for deterministic iteration.
+    pub components: BTreeMap<String, RedistComponent>,
+}
+
+/// Each top-level value is either a component object or a metadata scalar string.
+/// `untagged` makes serde try `RedistComponent` first, then fall back to a string.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum TopLevel {
+    Component(RedistComponent),
+    /// A metadata scalar (`release_date`, `release_label`, …); the captured string
+    /// is intentionally discarded — only its existence as a non-object matters.
+    Meta(#[allow(dead_code)] String),
+}
+
+impl RedistManifest {
+    /// Parse a `redistrib_<ver>.json` body, keeping only object component keys.
+    ///
+    /// # Errors
+    /// Returns [`RegistryError::Parse`] if `json` is not a valid redist manifest.
+    pub fn parse(json: &str) -> RegistryResult<Self> {
+        let raw: BTreeMap<String, TopLevel> =
+            serde_json::from_str(json).map_err(|e| RegistryError::Parse(e.to_string()))?;
+        let mut components = BTreeMap::new();
+        for (key, value) in raw {
+            if let TopLevel::Component(c) = value {
+                components.insert(key, c);
+            }
+        }
+        Ok(RedistManifest { components })
+    }
+
+    /// Look up a component by its redist name (e.g. `cuda_nvcc`).
+    #[must_use]
+    pub fn component(&self, name: &str) -> Option<&RedistComponent> {
+        self.components.get(name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,5 +148,117 @@ mod tests {
         };
         assert!(err.to_string().contains("no redistrib_<ver>.json links"));
         assert!(err.to_string().contains("https://example.invalid/redist/"));
+    }
+}
+
+#[cfg(test)]
+mod manifest_tests {
+    use super::*;
+
+    // A 13.3-style fixture: metadata string keys interleaved with object component
+    // keys, the CCCL component spelled `cccl` (renamed from `cuda_cccl` at 13.3),
+    // and both linux-x86_64 + windows-x86_64 platform objects.
+    const REDIST_133: &str = r#"{
+      "release_date": "2025-03-01",
+      "release_label": "13.3.0",
+      "cuda_nvcc": {
+        "name": "CUDA NVCC",
+        "version": "13.3.33",
+        "license": "CUDA Toolkit",
+        "linux-x86_64": {
+          "relative_path": "cuda_nvcc/linux-x86_64/cuda_nvcc-linux-x86_64-13.3.33-archive.tar.xz",
+          "sha256": "aaa111",
+          "md5": "m1",
+          "size": 100
+        },
+        "windows-x86_64": {
+          "relative_path": "cuda_nvcc/windows-x86_64/cuda_nvcc-windows-x86_64-13.3.33-archive.zip",
+          "sha256": "aaa222",
+          "size": 200
+        }
+      },
+      "cccl": {
+        "name": "CXX Core Compute Libraries",
+        "version": "13.3.3.3.1",
+        "linux-x86_64": {
+          "relative_path": "cccl/linux-x86_64/cccl-linux-x86_64-13.3.3.3.1-archive.tar.xz",
+          "sha256": "ccc111",
+          "size": 50
+        }
+      }
+    }"#;
+
+    // A 12.x fixture: only cuda_nvcc + cuda_cudart, no md5 on cudart.
+    const REDIST_124: &str = r#"{
+      "release_label": "12.4.1",
+      "cuda_nvcc": {
+        "version": "12.4.131",
+        "linux-x86_64": {
+          "relative_path": "cuda_nvcc/linux-x86_64/cuda_nvcc-linux-x86_64-12.4.131-archive.tar.xz",
+          "sha256": "deadbeef",
+          "md5": "abc",
+          "size": 1234
+        }
+      },
+      "cuda_cudart": {
+        "version": "12.4.127",
+        "linux-x86_64": {
+          "relative_path": "cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.4.127-archive.tar.xz",
+          "sha256": "feedface",
+          "size": 5678
+        }
+      }
+    }"#;
+
+    #[test]
+    fn parse_keeps_only_object_component_keys() {
+        let m = RedistManifest::parse(REDIST_133).expect("parse 13.3");
+        // metadata string keys must NOT become components.
+        assert!(m.component("release_date").is_none());
+        assert!(m.component("release_label").is_none());
+        // object keys must.
+        assert!(m.component("cuda_nvcc").is_some());
+        assert!(
+            m.component("cccl").is_some(),
+            "13.3 uses `cccl` not `cuda_cccl`"
+        );
+        // exactly two real components.
+        assert_eq!(m.components.len(), 2);
+    }
+
+    #[test]
+    fn component_exposes_per_platform_artifacts_with_verbatim_paths() {
+        let m = RedistManifest::parse(REDIST_133).unwrap();
+        let nvcc = m.component("cuda_nvcc").unwrap();
+        assert_eq!(nvcc.name.as_deref(), Some("CUDA NVCC"));
+        assert_eq!(nvcc.version.as_deref(), Some("13.3.33"));
+        let lin = nvcc.platforms.get("linux-x86_64").expect("linux object");
+        assert_eq!(
+            lin.relative_path,
+            "cuda_nvcc/linux-x86_64/cuda_nvcc-linux-x86_64-13.3.33-archive.tar.xz"
+        );
+        assert_eq!(lin.sha256, "aaa111");
+        assert_eq!(lin.md5.as_deref(), Some("m1"));
+        assert_eq!(lin.size, 100);
+        // windows object present, md5 absent (Option) → None, not an error.
+        let win = nvcc.platforms.get("windows-x86_64").unwrap();
+        assert_eq!(win.md5, None);
+        assert_eq!(win.size, 200);
+    }
+
+    #[test]
+    fn parse_12x_minimal_set() {
+        let m = RedistManifest::parse(REDIST_124).unwrap();
+        assert_eq!(m.components.len(), 2);
+        let cudart = m.component("cuda_cudart").unwrap();
+        let lin = cudart.platforms.get("linux-x86_64").unwrap();
+        assert_eq!(lin.sha256, "feedface");
+        assert_eq!(lin.md5, None);
+    }
+
+    #[test]
+    fn parse_rejects_non_json() {
+        let err = RedistManifest::parse("<html>not json</html>").unwrap_err();
+        assert!(matches!(err, RegistryError::Parse(_)));
     }
 }
