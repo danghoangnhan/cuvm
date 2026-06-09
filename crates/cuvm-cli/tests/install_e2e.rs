@@ -306,3 +306,12 @@ fn install_cudnn_flag_parses_without_error_in_m2() {
         .failure() // network failure, NOT a clap parse error
         .stderr(contains("cuvm:"));
 }
+
+#[test]
+fn install_help_documents_reinstall_flag() {
+    cuvm()
+        .args(["install", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--reinstall"));
+}

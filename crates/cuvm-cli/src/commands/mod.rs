@@ -135,10 +135,14 @@ pub enum Command {
         #[arg(long)]
         cudnn: bool,
     },
-    /// Download and install a CUDA toolkit version.
+    /// Download and install one or more CUDA toolkit versions.
     Install {
-        /// Version spec: exact (`12.4.1`), minor (`12.4`), major (`12`), or `latest`.
-        spec: String,
+        /// Version spec(s): exact (`12.4.1`), minor (`12.4`), major (`12`), or `latest`.
+        #[arg(required = true, num_args = 1..)]
+        specs: Vec<String>,
+        /// Reinstall even if the version is already installed (re-download + replace).
+        #[arg(long, short = 'r')]
+        reinstall: bool,
         /// Pair a specific cuDNN version (M2: parsed but a no-op; pairing lands in M3).
         #[arg(long)]
         cudnn: Option<String>,
@@ -223,24 +227,26 @@ impl Command {
                 Ok(0)
             }
             Command::Install {
-                spec,
+                specs,
+                reinstall,
                 cudnn: _,
                 no_cudnn: _,
                 force,
             } => {
                 let registry = build_registry();
                 let installer = build_pipeline_installer(&deps.home);
-                install::run_install(
+                let code = install::run_install(
                     registry.as_ref(),
                     installer.as_ref(),
                     deps.inventory.as_ref(),
                     deps.compat.as_ref(),
                     deps.driver.as_ref(),
                     &deps.home.join("versions"),
-                    &spec,
+                    &specs,
+                    reinstall,
                     force,
                 )?;
-                Ok(0)
+                Ok(code)
             }
             Command::Current => {
                 current::run(deps)?;

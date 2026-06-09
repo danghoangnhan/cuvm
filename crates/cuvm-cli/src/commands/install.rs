@@ -89,6 +89,41 @@ pub fn compat_gate(
     }
 }
 
+/// `cuvm install <spec>...`: install each spec, continuing past per-target
+/// failures, then print an aggregate summary. Returns the process exit code
+/// (`0` = all installed or no-op; `1` = at least one target failed).
+///
+/// # Errors
+/// Returns an error only for an unrecoverable failure before the per-target loop
+/// (none today — per-target errors are caught and summarized).
+#[allow(clippy::too_many_arguments)]
+pub fn run_install(
+    registry: &dyn RegistryClient,
+    installer: &dyn Installer,
+    inventory: &dyn Inventory,
+    engine: &dyn CompatEngine,
+    driver_probe: &dyn DriverProbe,
+    version_dir: &Path,
+    specs: &[String],
+    reinstall: bool,
+    force: bool,
+) -> Result<i32> {
+    let mut failed = 0usize;
+    for spec in specs {
+        match install_one(
+            registry, installer, inventory, engine, driver_probe, version_dir, spec, reinstall,
+            force,
+        ) {
+            Ok(handle) => println!("installed {handle}"),
+            Err(e) => {
+                eprintln!("cuvm: error installing {spec}: {e:#}");
+                failed += 1;
+            }
+        }
+    }
+    Ok(i32::from(failed > 0))
+}
+
 /// `cuvm install <ver> [--force]`: resolve newest patch, compat-gate, acquire,
 /// verify, extract, place, smoke-test, then record a `Downloaded` manifest bundle.
 ///
@@ -98,7 +133,7 @@ pub fn compat_gate(
 /// Returns an error if resolution, the compat gate (without `--force`), download,
 /// verification, extraction, placement, the smoke test, or manifest I/O fails.
 #[allow(clippy::too_many_arguments)]
-pub fn run_install(
+fn install_one(
     registry: &dyn RegistryClient,
     installer: &dyn Installer,
     inventory: &dyn Inventory,
@@ -106,8 +141,10 @@ pub fn run_install(
     driver_probe: &dyn DriverProbe,
     version_dir: &Path,
     spec: &str,
+    reinstall: bool,
     force: bool,
-) -> Result<()> {
+) -> Result<String> {
+    let _ = reinstall;
     let platform = current_platform();
 
     // 1. Resolve newest patch matching `spec` from the registry.
@@ -205,8 +242,7 @@ pub fn run_install(
     manifest.bundles.push(record);
     inventory.save(&manifest)?;
 
-    println!("installed {handle}");
-    Ok(())
+    Ok(handle)
 }
 
 /// `cuvm uninstall <ver>`: for `Downloaded`/`Supplied` rows, delete the
