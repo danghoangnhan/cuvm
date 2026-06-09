@@ -2,5 +2,6 @@
 
 pub mod cli;
 pub mod commands;
+pub mod composition;
 pub mod shims;
 pub mod wiring;

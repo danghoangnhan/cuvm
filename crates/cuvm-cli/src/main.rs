@@ -1,19 +1,34 @@
 //! cuvm binary — composition root.
 
-use anyhow::Result;
 use cuvm_cli::cli::Cli;
-use cuvm_store::{FsInventory, Layout};
 
-fn main() -> Result<()> {
+fn main() {
+    let exit = real_main();
+    std::process::exit(exit);
+}
+
+fn real_main() -> i32 {
     let args = Cli::parse_args();
 
-    // Build the inventory from CUVM_HOME (or ~/.cuvm fallback).
-    let layout = Layout::resolve_with(|k| std::env::var(k).ok(), dirs::home_dir())?;
-    let inventory = FsInventory::new(layout);
+    let deps = match cuvm_cli::composition::build() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("cuvm: failed to initialize: {e:#}");
+            return 1;
+        }
+    };
 
-    if let Some(cmd) = args.command {
-        cmd.run(&inventory)?;
+    let Some(cmd) = args.command else {
+        // No subcommand; clap prints help via --help already.
+        // If launched with no args, print a hint.
+        eprintln!("cuvm: run `cuvm --help` for usage");
+        return 1;
+    };
+    match cmd.run(&deps) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("cuvm: {e:#}");
+            1
+        }
     }
-
-    Ok(())
 }

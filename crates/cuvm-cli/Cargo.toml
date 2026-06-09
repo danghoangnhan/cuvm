@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 cuvm-app = { path = "../cuvm-app" }
 cuvm-core = { path = "../cuvm-core" }
+cuvm-nvidia = { path = "../cuvm-nvidia" }
 cuvm-platform = { path = "../cuvm-platform" }
 cuvm-store = { path = "../cuvm-store" }
 clap = { workspace = true }
