@@ -11,5 +11,6 @@ pub mod download;
 pub mod error;
 pub mod http;
 
+pub use download::{sha256_file, Downloader};
 pub use error::{DownloadError, Result};
 pub use http::http_get;
