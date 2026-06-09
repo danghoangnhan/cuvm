@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use cuvm_app::{AcquirePlan, ArtifactKind, Cached, Installer};
 use cuvm_core::{Bundle, Candidate, Platform, VersionMeta};
-use cuvm_download::{sha256_file, Downloader};
+use cuvm_download::{extract_tar_xz, sha256_file, strip_wrapper_dir, Downloader};
 
 use crate::not_impl;
 use crate::unix::adopt;
@@ -23,6 +23,33 @@ pub(crate) fn artifact_file_name(a: &cuvm_app::Artifact) -> String {
         .next()
         .unwrap_or(&a.relative_path)
         .to_string()
+}
+
+/// Recursively copy every entry from `src` into `dst`, creating directories as
+/// needed. Redist component trees are disjoint (one ships `bin/`, another `lib/`),
+/// so a later file overwriting an earlier one is not expected; we overwrite rather
+/// than error to stay idempotent on re-extract.
+fn merge_tree(src: &Path, dst: &Path) -> Result<()> {
+    for entry in
+        std::fs::read_dir(src).with_context(|| format!("reading staging dir {}", src.display()))?
+    {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            std::fs::create_dir_all(&to).with_context(|| format!("mkdir {}", to.display()))?;
+            merge_tree(&from, &to)?;
+        } else {
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("mkdir {}", parent.display()))?;
+            }
+            std::fs::copy(&from, &to)
+                .with_context(|| format!("copy {} -> {}", from.display(), to.display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Unix (Linux/WSL) implementation of the `Installer` port.
@@ -112,8 +139,49 @@ impl Installer for UnixInstaller {
         }
         Ok(())
     }
-    fn extract_atomic(&self, _arts: &[Cached], _tmp: &Path) -> Result<PathBuf> {
-        Err(not_impl("UnixInstaller::extract_atomic"))
+    fn extract_atomic(&self, arts: &[Cached], tmp: &Path) -> Result<PathBuf> {
+        // Start from a clean tmp prefix so a re-run never merges stale files.
+        if tmp.exists() {
+            std::fs::remove_dir_all(tmp)
+                .with_context(|| format!("clearing stale temp tree {}", tmp.display()))?;
+        }
+        std::fs::create_dir_all(tmp)
+            .with_context(|| format!("creating temp tree {}", tmp.display()))?;
+
+        for (idx, cached) in arts.iter().enumerate() {
+            // Extract each archive into its own staging dir, strip the one wrapper
+            // level, then merge the stripped contents into the shared `tmp` prefix.
+            let staging = tmp
+                .parent()
+                .unwrap_or(tmp)
+                .join(format!(".stage-{idx}-{}", cached.artifact.component));
+            if staging.exists() {
+                std::fs::remove_dir_all(&staging)
+                    .with_context(|| format!("clearing staging {}", staging.display()))?;
+            }
+            std::fs::create_dir_all(&staging)
+                .with_context(|| format!("creating staging {}", staging.display()))?;
+
+            extract_tar_xz(&cached.path, &staging).with_context(|| {
+                format!(
+                    "extracting {} ({})",
+                    cached.artifact.component,
+                    cached.path.display()
+                )
+            })?;
+            strip_wrapper_dir(&staging).with_context(|| {
+                format!("stripping wrapper dir for {}", cached.artifact.component)
+            })?;
+            merge_tree(&staging, tmp).with_context(|| {
+                format!(
+                    "merging {} into {}",
+                    cached.artifact.component,
+                    tmp.display()
+                )
+            })?;
+            std::fs::remove_dir_all(&staging).ok();
+        }
+        Ok(tmp.to_path_buf())
     }
     fn place(&self, _tmp: &Path, _dst: &Path, _meta: &VersionMeta) -> Result<()> {
         Err(not_impl("UnixInstaller::place"))
