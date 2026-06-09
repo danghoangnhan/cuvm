@@ -1,0 +1,14 @@
+---
+source: crates/cuvm-platform/tests/windows_env_golden.rs
+assertion_line: 60
+expression: script
+---
+if ($env:CUVM_INJECTED) {
+  $cuvm_inj = $env:CUVM_INJECTED -split ';'
+  $env:Path = (($env:Path -split ';') | Where-Object { $_ -and ($cuvm_inj -notcontains $_) }) -join ';'
+}
+Remove-Item Env:\CUDA_HOME -ErrorAction SilentlyContinue
+Remove-Item Env:\CUDA_PATH -ErrorAction SilentlyContinue
+Remove-Item Env:\CUDAToolkit_ROOT -ErrorAction SilentlyContinue
+Remove-Item Env:\CUVM_CURRENT -ErrorAction SilentlyContinue
+Remove-Item Env:\CUVM_INJECTED -ErrorAction SilentlyContinue
