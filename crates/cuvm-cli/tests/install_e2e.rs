@@ -99,9 +99,14 @@ fn serve_redist_124(server: &MockServer, fixtures: &Path) {
     let cudart_rel =
         "cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.4.131-archive.tar.xz".to_string();
 
-    let index_html =
-        r#"<html><body><a href="redistrib_12.4.1.json">redistrib_12.4.1.json</a></body></html>"#
-            .to_string();
+    // The index lists both 12.4.1 (the installable fixture below) and 12.6.0
+    // (no manifest/tarball served — present only so it scrapes as an *available*
+    // download for the unified-`ls` view).
+    let index_html = r#"<html><body>
+        <a href="redistrib_12.4.1.json">redistrib_12.4.1.json</a>
+        <a href="redistrib_12.6.0.json">redistrib_12.6.0.json</a>
+        </body></html>"#
+        .to_string();
     let redistrib = format!(
         r#"{{
   "release_date": "2024-03-01",
@@ -383,4 +388,69 @@ fn multi_install_continues_past_failure_and_exits_nonzero() {
     // The good target really landed.
     home.child("versions/12.4.1/bin/nvcc")
         .assert(predicates::path::exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn unified_ls_shows_installed_and_available() {
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    let server = MockServer::start();
+    serve_redist_124(&server, fixtures.path());
+    // Add a 12.6.0 manifest to the index so it shows as an available download.
+    server.mock(|when, then| {
+        when.method(GET).path("/redist/redistrib_12.6.0.json");
+        then.status(200).body(r#"{"release_date":"2024-08-01"}"#);
+    });
+
+    let envs = |c: &mut Command| {
+        c.env("CUVM_HOME", home.path())
+            .env(
+                "CUVM_REGISTRY_URL",
+                format!("{}/redist/", server.base_url()),
+            )
+            .env("CUVM_SKIP_SMOKE", "1");
+    };
+
+    // Install warms the cache + lands 12.4.1.
+    let mut c = cuvm();
+    envs(&mut c);
+    c.args(["install", "12.4", "--no-cudnn"]).assert().success();
+
+    // ls --refresh forces a fresh fetch so both index entries are cached.
+    let mut c = cuvm();
+    envs(&mut c);
+    c.args(["ls", "--refresh"]).assert().success();
+
+    // Unified ls: 12.4.1 installed (path), 12.6.0 available.
+    let mut c = cuvm();
+    envs(&mut c);
+    c.arg("ls")
+        .assert()
+        .success()
+        .stdout(contains("12.4.1").and(contains("versions/12.4.1")))
+        .stdout(contains("12.6.0").and(contains("<download available>")));
+
+    // --only-installed hides the available row.
+    let mut c = cuvm();
+    envs(&mut c);
+    c.args(["ls", "--only-installed"])
+        .assert()
+        .success()
+        .stdout(contains("12.4.1"))
+        .stdout(contains("<download available>").not());
+
+    // JSON output parses and marks installed vs available.
+    let mut c = cuvm();
+    envs(&mut c);
+    let out = c.args(["ls", "--output-format", "json"]).assert().success();
+    let json: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let arr = json.as_array().unwrap();
+    let installed_124 = arr
+        .iter()
+        .any(|e| e["version"] == "12.4.1" && e["installed"] == true);
+    let avail_126 = arr
+        .iter()
+        .any(|e| e["version"] == "12.6.0" && e["installed"] == false);
+    assert!(installed_124 && avail_126, "{json}");
 }

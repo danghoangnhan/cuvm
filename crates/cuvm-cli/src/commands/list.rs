@@ -81,7 +81,12 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
             let _ = redist_cache::write(&layout, &platform, &v, OffsetDateTime::now_utc());
             Some(v)
         } else {
-            redist_cache::read(&layout, &platform, OffsetDateTime::now_utc(), CACHE_TTL_SECS)
+            redist_cache::read(
+                &layout,
+                &platform,
+                OffsetDateTime::now_utc(),
+                CACHE_TTL_SECS,
+            )
         };
         match available {
             Some(mut vers) => {

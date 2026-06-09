@@ -623,6 +623,7 @@ dependencies = [
  "insta",
  "mockall",
  "predicates",
+ "serde_json",
  "sha2",
  "tar",
  "time",

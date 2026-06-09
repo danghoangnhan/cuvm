@@ -128,7 +128,13 @@ mod tests {
         let tmp = assert_fs::TempDir::new().unwrap();
         let layout = Layout::new(tmp.path());
         let written = OffsetDateTime::UNIX_EPOCH + Duration::days(1);
-        write(&layout, &plat(), &[Version::parse("12.4.1").unwrap()], written).unwrap();
+        write(
+            &layout,
+            &plat(),
+            &[Version::parse("12.4.1").unwrap()],
+            written,
+        )
+        .unwrap();
         let later = written + Duration::seconds(86_401);
         assert!(read(&layout, &plat(), later, 86_400).is_none());
     }
