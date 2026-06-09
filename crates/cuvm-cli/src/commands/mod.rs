@@ -8,6 +8,7 @@ pub mod doctor;
 pub mod env;
 pub mod hook;
 pub mod install;
+pub mod list;
 pub mod pin;
 pub mod r#use;
 pub mod which;
@@ -27,6 +28,13 @@ pub enum ShellArg {
     #[value(name = "powershell")]
     PowerShell,
     Cmd,
+}
+
+/// Output format for `cuvm ls`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum OutputFormat {
+    Text,
+    Json,
 }
 
 impl From<ShellArg> for Shell {
@@ -127,9 +135,30 @@ pub enum Command {
         #[arg(long)]
         scan: bool,
     },
-    /// List installed/adopted bundles.
-    Ls,
-    /// List toolkit versions available in the remote registry.
+    /// List installed and available CUDA toolkits (installed + `<download available>`).
+    Ls {
+        /// Optional version filter (exact/minor/major prefix).
+        spec: Option<String>,
+        /// Show only installed toolkits (offline; the M1 `ls` behaviour).
+        #[arg(long)]
+        only_installed: bool,
+        /// Show only available downloads (live fetch + cache refresh; == `ls-remote`).
+        #[arg(long, conflicts_with = "only_installed")]
+        only_downloads: bool,
+        /// Include old patch releases (default collapses available to newest patch/minor).
+        #[arg(long)]
+        all_versions: bool,
+        /// Show the redist URL for available rows instead of `<download available>`.
+        #[arg(long)]
+        show_urls: bool,
+        /// Force a live fetch + cache refresh before rendering.
+        #[arg(long)]
+        refresh: bool,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output_format: OutputFormat,
+    },
+    /// List toolkit versions available in the remote registry (alias for `ls --only-downloads`).
     LsRemote {
         /// List cuDNN versions instead (M2: parsed but a no-op; listing lands in M3).
         #[arg(long)]
@@ -203,6 +232,7 @@ impl Command {
     ///
     /// # Errors
     /// Propagates any I/O or logic error from the subcommand handler.
+    #[allow(clippy::too_many_lines)] // a flat dispatch over every subcommand variant
     pub fn run(self, deps: &Deps) -> Result<i32> {
         match self {
             Command::Adopt { path, scan } => {
@@ -217,13 +247,46 @@ impl Command {
                 }
                 Ok(0)
             }
-            Command::Ls => {
-                run_ls(deps)?;
+            Command::Ls {
+                spec,
+                only_installed,
+                only_downloads,
+                all_versions,
+                show_urls,
+                refresh,
+                output_format,
+            } => {
+                let registry = build_registry();
+                list::run_list(
+                    deps,
+                    registry.as_ref(),
+                    &list::ListOpts {
+                        spec,
+                        only_installed,
+                        only_downloads,
+                        all_versions,
+                        show_urls,
+                        refresh,
+                        json: matches!(output_format, OutputFormat::Json),
+                    },
+                )?;
                 Ok(0)
             }
             Command::LsRemote { cudnn: _ } => {
                 let registry = build_registry();
-                install::run_ls_remote(registry.as_ref())?;
+                list::run_list(
+                    deps,
+                    registry.as_ref(),
+                    &list::ListOpts {
+                        spec: None,
+                        only_installed: false,
+                        only_downloads: true,
+                        all_versions: false,
+                        show_urls: false,
+                        refresh: false,
+                        json: false,
+                    },
+                )?;
                 Ok(0)
             }
             Command::Install {
@@ -352,24 +415,4 @@ fn build_pipeline_installer(home: &std::path::Path) -> Box<dyn cuvm_app::Install
             vec![],
         ))
     }
-}
-
-/// `ls` implementation using `Deps` (marks default alias with `*`).
-fn run_ls(deps: &Deps) -> Result<()> {
-    let manifest = deps.inventory.load()?;
-    let default = manifest.aliases.get("default").cloned();
-    let bundles = deps.inventory.list()?;
-    if bundles.is_empty() {
-        println!("(no toolkits installed)");
-        return Ok(());
-    }
-    for b in &bundles {
-        let handle = b.handle();
-        if default.as_deref() == Some(handle.as_str()) {
-            println!("{handle} *");
-        } else {
-            println!("{handle}");
-        }
-    }
-    Ok(())
 }
