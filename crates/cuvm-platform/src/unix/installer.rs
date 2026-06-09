@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use cuvm_app::{AcquirePlan, ArtifactKind, Cached, Installer};
 use cuvm_core::{Bundle, Candidate, Platform, VersionMeta};
-use cuvm_download::{extract_tar_xz, sha256_file, strip_wrapper_dir, Downloader};
+use cuvm_download::{extract_tar_xz, sha256_file, strip_wrapper_dir, Downloader, Reporter};
 
 use crate::not_impl;
 use crate::unix::adopt;
@@ -77,6 +77,8 @@ pub struct UnixInstaller {
     pub(crate) cache_dir: PathBuf,
     /// Host platform recorded on adopted candidates.
     pub(crate) platform: Platform,
+    /// Progress sink (defaults to silent; the CLI injects an indicatif reporter).
+    pub(crate) reporter: Reporter,
 }
 
 impl UnixInstaller {
@@ -87,6 +89,7 @@ impl UnixInstaller {
             scan_root: PathBuf::from("/usr/local"),
             cache_dir: std::env::temp_dir().join("cuvm-cache"),
             platform,
+            reporter: cuvm_download::silent(),
         }
     }
 
@@ -97,6 +100,7 @@ impl UnixInstaller {
             scan_root,
             cache_dir: std::env::temp_dir().join("cuvm-cache"),
             platform,
+            reporter: cuvm_download::silent(),
         }
     }
 
@@ -110,7 +114,15 @@ impl UnixInstaller {
             scan_root: PathBuf::from("/usr/local"),
             cache_dir,
             platform,
+            reporter: cuvm_download::silent(),
         }
+    }
+
+    /// Inject a progress reporter (the composition root supplies an indicatif one).
+    #[must_use]
+    pub fn with_reporter(mut self, reporter: Reporter) -> Self {
+        self.reporter = reporter;
+        self
     }
 }
 
@@ -118,7 +130,7 @@ impl Installer for UnixInstaller {
     fn acquire(&self, plan: &AcquirePlan) -> Result<Vec<Cached>> {
         std::fs::create_dir_all(&self.cache_dir)
             .with_context(|| format!("creating download cache dir {}", self.cache_dir.display()))?;
-        let downloader = Downloader::new(self.cache_dir.clone());
+        let downloader = Downloader::with_reporter(self.cache_dir.clone(), self.reporter.clone());
         let mut out = Vec::with_capacity(plan.artifacts.len());
         for artifact in &plan.artifacts {
             let file_name = artifact_file_name(artifact);
@@ -139,6 +151,7 @@ impl Installer for UnixInstaller {
     }
 
     fn verify(&self, arts: &[Cached]) -> Result<()> {
+        self.reporter.on_phase("Verifying");
         for cached in arts {
             let got = sha256_file(&cached.path)
                 .with_context(|| format!("hashing cached artifact {}", cached.path.display()))?;
@@ -155,6 +168,7 @@ impl Installer for UnixInstaller {
         Ok(())
     }
     fn extract_atomic(&self, arts: &[Cached], tmp: &Path) -> Result<PathBuf> {
+        self.reporter.on_phase("Extracting");
         // Start from a clean tmp prefix so a re-run never merges stale files.
         if tmp.exists() {
             std::fs::remove_dir_all(tmp)

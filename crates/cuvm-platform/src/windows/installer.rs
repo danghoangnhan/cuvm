@@ -11,6 +11,7 @@ use anyhow::Result;
 use cuvm_app::Artifact;
 use cuvm_app::{AcquirePlan, ArtifactKind, Cached, Candidate, Installer};
 use cuvm_core::{Arch, Bundle, Os, Platform, Source, Toolkit, Version, VersionMeta};
+use cuvm_download::Reporter;
 use time::OffsetDateTime;
 
 /// Outcome of attempting the Windows download/assemble path. The CLI (WU-15)
@@ -35,6 +36,7 @@ pub struct WindowsInstaller {
     roots: Vec<PathBuf>,
     cache_dir: PathBuf,
     dest_base: PathBuf,
+    reporter: Reporter,
 }
 
 impl Default for WindowsInstaller {
@@ -56,6 +58,7 @@ impl WindowsInstaller {
             roots: default_roots(),
             cache_dir: base.join("cache"),
             dest_base: base.join("versions"),
+            reporter: cuvm_download::silent(),
         }
     }
 
@@ -75,7 +78,15 @@ impl WindowsInstaller {
             roots,
             cache_dir,
             dest_base,
+            reporter: cuvm_download::silent(),
         }
+    }
+
+    /// Inject a progress reporter (the composition root supplies an indicatif one).
+    #[must_use]
+    pub fn with_reporter(mut self, reporter: Reporter) -> Self {
+        self.reporter = reporter;
+        self
     }
 
     fn windows_platform() -> Platform {
@@ -238,7 +249,7 @@ impl Installer for WindowsInstaller {
                 self.cache_dir.display()
             )
         })?;
-        let downloader = Downloader::new(self.cache_dir.clone());
+        let downloader = Downloader::with_reporter(self.cache_dir.clone(), self.reporter.clone());
         let mut out = Vec::with_capacity(plan.artifacts.len());
         for art in &plan.artifacts {
             let file_name = Path::new(&art.relative_path).file_name().map_or_else(
@@ -257,6 +268,7 @@ impl Installer for WindowsInstaller {
     }
 
     fn verify(&self, arts: &[Cached]) -> Result<()> {
+        self.reporter.on_phase("Verifying");
         for c in arts {
             let got = cuvm_download::sha256_file(&c.path)
                 .map_err(|e| anyhow::anyhow!("verify {}: {e}", c.artifact.component))?;
@@ -273,6 +285,7 @@ impl Installer for WindowsInstaller {
     fn extract_atomic(&self, arts: &[Cached], tmp: &Path) -> Result<PathBuf> {
         use cuvm_download::{extract_zip, strip_wrapper_dir};
 
+        self.reporter.on_phase("Extracting");
         // Start from a clean tmp prefix (never-partial: caller renames it into place).
         if tmp.exists() {
             std::fs::remove_dir_all(tmp)
