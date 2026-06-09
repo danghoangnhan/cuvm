@@ -43,6 +43,19 @@ impl Version {
         self.fields.first().copied().unwrap_or(0)
     }
 
+    /// A `major.minor` view of this version with patch (and beyond) dropped —
+    /// the key used to look a toolkit up in the compat tables, which are keyed by
+    /// CUDA *line* (e.g. `12.4`). `12.4.1` → `12.4`; `13` → `13.0`.
+    #[must_use]
+    pub fn major_minor(&self) -> Version {
+        let major = self.major();
+        let minor = self.fields.get(1).copied().unwrap_or(0);
+        Version {
+            fields: vec![major, minor],
+            raw: format!("{major}.{minor}"),
+        }
+    }
+
     /// Canonical field view with trailing zeros trimmed — basis for `Eq`/`Hash` so that
     /// `12.4`, `12.4.0`, and `12.4.0.0` are treated as the same value.
     ///
@@ -144,6 +157,14 @@ mod tests {
         let a = Version::parse("570.26").unwrap();
         let b = Version::parse("570.124.06").unwrap();
         assert!(a < b, "expected 570.26 < 570.124.06 numerically");
+    }
+
+    #[test]
+    fn major_minor_drops_patch_and_defaults_minor() {
+        // Real toolkits are patch-versioned; the compat tables are keyed by line.
+        assert_eq!(Version::parse("12.4.1").unwrap().major_minor(), v("12.4"));
+        assert_eq!(Version::parse("13").unwrap().major_minor(), v("13.0"));
+        assert_eq!(Version::parse("12.4.1").unwrap().major_minor().raw, "12.4");
     }
 
     #[test]

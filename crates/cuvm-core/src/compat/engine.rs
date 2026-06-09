@@ -114,7 +114,9 @@ impl DefaultCompatEngine {
         let fwd = Self::forward_compat_eligible(d);
         let os = d.platform.os;
 
-        let Some(row) = self.drivers.row_for(want) else {
+        // Toolkits are patch-versioned (e.g. 12.4.1); the table is keyed by line.
+        let want_line = want.major_minor();
+        let Some(row) = self.drivers.row_for(&want_line) else {
             return CompatOutcome {
                 ok: false,
                 severity: CompatSeverity::Block,
@@ -338,6 +340,18 @@ mod tests {
         let e = DefaultCompatEngine::new();
         let d = linux_driver("550.54.14", GpuClass::GeForce);
         let out = e.check_toolkit(&d, &Version::parse("12.4").unwrap(), true);
+        assert_eq!(out.severity, CompatSeverity::Ok);
+        assert!(out.ok);
+    }
+
+    #[test]
+    fn check_toolkit_accepts_patch_version_via_minor_row() {
+        let e = DefaultCompatEngine::new();
+        // Real installed toolkits carry a patch (12.4.1); it must resolve to the
+        // 12.4 line row, not fall through to "unknown toolkit". Driver 565 clears
+        // the 12.4 minimum (550.54.14), so strict -> Ok.
+        let d = linux_driver("565.57.01", GpuClass::GeForce);
+        let out = e.check_toolkit(&d, &Version::parse("12.4.1").unwrap(), true);
         assert_eq!(out.severity, CompatSeverity::Ok);
         assert!(out.ok);
     }
