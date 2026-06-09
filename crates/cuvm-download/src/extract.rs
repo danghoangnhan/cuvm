@@ -146,6 +146,53 @@ pub fn extract_zip(archive: &Path, dest: &Path) -> Result<(), ExtractError> {
     Ok(())
 }
 
+/// Flatten a single redist wrapper directory in `dir`, one level deep.
+///
+/// Redist tarballs wrap their tree in exactly one top-level directory
+/// (`"<component>-<platform>-<version>-archive/"`). When `dir`'s top level holds
+/// exactly one entry, a directory, and no files, this moves that directory's
+/// children up into `dir` and removes the now-empty wrapper. Any other shape
+/// (already flat, multiple entries, or a stray top-level file) is a safe no-op.
+///
+/// # Errors
+/// Returns [`ExtractError::Io`] on a filesystem failure, or
+/// [`ExtractError::Wrapper`] if a child cannot be moved up (e.g. a name clash).
+pub fn strip_wrapper_dir(dir: &Path) -> Result<(), ExtractError> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        entries.push((entry.path(), entry.file_type()?));
+    }
+
+    // Only flatten the unambiguous single-wrapper case.
+    if entries.len() != 1 {
+        return Ok(());
+    }
+    let (wrapper, file_type) = &entries[0];
+    if !file_type.is_dir() {
+        return Ok(());
+    }
+
+    // Move every child of the wrapper up into `dir`.
+    for child in fs::read_dir(wrapper)? {
+        let child = child?;
+        let from = child.path();
+        let name = child.file_name();
+        let to = dir.join(&name);
+        if to.exists() {
+            return Err(ExtractError::Wrapper(format!(
+                "name clash flattening {}: {} already exists",
+                wrapper.display(),
+                to.display()
+            )));
+        }
+        fs::rename(&from, &to)?;
+    }
+
+    fs::remove_dir(wrapper)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tar_xz_tests {
     use super::*;
@@ -363,6 +410,71 @@ mod zip_slip_e2e_tests {
         assert!(matches!(err, ExtractError::ZipSlip { .. }), "{err:?}");
 
         assert!(!dir.path().join("escape.txt").exists());
+    }
+}
+
+#[cfg(test)]
+mod strip_wrapper_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn touch(p: &Path, body: &[u8]) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    }
+
+    #[test]
+    fn flattens_single_wrapper_dir() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let wrapper = root.join("cuda_nvcc-linux-x86_64-12.4.131-archive");
+        touch(&wrapper.join("bin/nvcc"), b"x");
+        touch(&wrapper.join("lib/libcudart.so"), b"y");
+        touch(&wrapper.join("LICENSE"), b"lic");
+
+        strip_wrapper_dir(root).unwrap();
+
+        assert!(root.join("bin/nvcc").is_file());
+        assert!(root.join("lib/libcudart.so").is_file());
+        assert!(root.join("LICENSE").is_file());
+        // The wrapper itself is gone.
+        assert!(!wrapper.exists());
+    }
+
+    #[test]
+    fn already_flat_is_noop() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        touch(&root.join("bin/nvcc"), b"x");
+        touch(&root.join("include/cuda.h"), b"h");
+
+        strip_wrapper_dir(root).unwrap();
+
+        assert!(root.join("bin/nvcc").is_file());
+        assert!(root.join("include/cuda.h").is_file());
+    }
+
+    #[test]
+    fn top_level_file_beside_dir_is_noop() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let wrapper = root.join("only-archive");
+        touch(&wrapper.join("bin/nvcc"), b"x");
+        touch(&root.join("stray.txt"), b"s"); // a file sits at top level
+
+        strip_wrapper_dir(root).unwrap();
+
+        // Not flattened: the wrapper dir survives untouched.
+        assert!(wrapper.join("bin/nvcc").is_file());
+        assert!(root.join("stray.txt").is_file());
+    }
+
+    #[test]
+    fn empty_dir_is_noop() {
+        let dir = tempdir().unwrap();
+        strip_wrapper_dir(dir.path()).unwrap();
+        // Nothing created, nothing removed.
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 }
 
