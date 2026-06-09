@@ -88,22 +88,9 @@ impl Downloader {
             source,
         })?;
 
-        // --- DOWNLOAD-INTO-PART SEAM (Task 11.5 inserts the Range-resume branch
-        // --- here; for now we always (re)start at byte 0). ---
-        let body = http_body(url)?;
-        let mut part = fs::File::create(&part_path).map_err(|source| DownloadError::Io {
-            path: part_path.clone(),
-            source,
-        })?;
-        part.write_all(&body).map_err(|source| DownloadError::Io {
-            path: part_path.clone(),
-            source,
-        })?;
-        part.flush().map_err(|source| DownloadError::Io {
-            path: part_path.clone(),
-            source,
-        })?;
-        drop(part);
+        // --- DOWNLOAD-INTO-PART SEAM: resume if a .part survives a prior run. ---
+        let resume_from = fs::metadata(&part_path).map_or(0, |m| m.len());
+        http_into_part(url, &part_path, resume_from)?;
         // --- END SEAM ---
 
         // Verify, then atomically expose under the final name — or keep nothing.
@@ -125,29 +112,68 @@ impl Downloader {
     }
 }
 
-/// Fetch the full body of an artifact URL. Split out so the resume path (Task
-/// 11.5) can wrap it with a `Range` request without touching `fetch`'s control flow.
-fn http_body(url: &str) -> Result<Vec<u8>> {
-    match ureq::get(url).call() {
-        Ok(resp) => {
-            let mut buf = Vec::new();
-            resp.into_reader()
-                .read_to_end(&mut buf)
-                .map_err(|source| DownloadError::Io {
-                    path: PathBuf::from(url),
-                    source,
-                })?;
-            Ok(buf)
+/// Stream `url` into `part_path`. If `resume_from > 0`, request `Range:
+/// bytes=<resume_from>-` and append a `206` tail to the existing `.part`; on a
+/// `200` (server ignored `Range`) truncate and write the whole body so a stale
+/// `.part` can never corrupt the result.
+fn http_into_part(url: &str, part_path: &Path, resume_from: u64) -> Result<()> {
+    let req = ureq::get(url);
+    let req = if resume_from > 0 {
+        req.set("Range", &format!("bytes={resume_from}-"))
+    } else {
+        req
+    };
+
+    let resp = match req.call() {
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(status, _resp)) => {
+            return Err(DownloadError::HttpStatus {
+                status,
+                url: url.to_string(),
+            })
         }
-        Err(ureq::Error::Status(status, _resp)) => Err(DownloadError::HttpStatus {
-            status,
-            url: url.to_string(),
-        }),
-        Err(transport) => Err(DownloadError::Transport {
-            url: url.to_string(),
-            source: Box::new(transport),
-        }),
+        Err(transport) => {
+            return Err(DownloadError::Transport {
+                url: url.to_string(),
+                source: Box::new(transport),
+            })
+        }
+    };
+
+    // 206 => append to the existing .part; anything else (200) => rewrite it.
+    let append = resp.status() == 206 && resume_from > 0;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(append)
+        .truncate(!append)
+        .open(part_path)
+        .map_err(|source| DownloadError::Io {
+            path: part_path.to_path_buf(),
+            source,
+        })?;
+
+    let mut reader = resp.into_reader();
+    let mut buf = vec![0u8; 64 * 1024].into_boxed_slice();
+    loop {
+        let n = reader.read(&mut buf).map_err(|source| DownloadError::Io {
+            path: part_path.to_path_buf(),
+            source,
+        })?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])
+            .map_err(|source| DownloadError::Io {
+                path: part_path.to_path_buf(),
+                source,
+            })?;
     }
+    file.flush().map_err(|source| DownloadError::Io {
+        path: part_path.to_path_buf(),
+        source,
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]
