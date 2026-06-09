@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use cuvm_app::{Artifact, Cached, Installer};
-use cuvm_core::{Arch, Os, Platform};
+use cuvm_core::{Arch, Os, Platform, Source, VersionMeta};
 use cuvm_platform::unix::UnixInstaller;
+use time::OffsetDateTime;
 
 /// Build a redist-shaped `<name>.tar.xz`: files live under one wrapper dir
 /// `<wrapper>/...` (exactly what NVIDIA redist tarballs ship). Returns the archive path.
@@ -102,4 +103,85 @@ fn extract_atomic_strips_wrapper_and_merges_components() {
             .exists(),
         "wrapper dir must be stripped"
     );
+}
+
+fn meta() -> VersionMeta {
+    VersionMeta {
+        version: "12.4.1".into(),
+        source: Source::Downloaded,
+        cudnn: None,
+        components: vec!["cuda_nvcc".into(), "cuda_cudart".into()],
+        sha256: None,
+        has_lib64: true,
+        installed_at: OffsetDateTime::UNIX_EPOCH,
+    }
+}
+
+/// Build a merged tmp tree (post-extract shape) directly, then place it.
+fn staged_tree(root: &Path) -> PathBuf {
+    let tmp = root.join(".tmp-12.4.1");
+    fs::create_dir_all(tmp.join("bin")).unwrap();
+    fs::create_dir_all(tmp.join("lib")).unwrap();
+    fs::write(tmp.join("bin/nvcc"), "#!/bin/sh\n").unwrap();
+    fs::write(tmp.join("bin/nvcc.profile"), "TOP=$(_HERE_)/..\n").unwrap();
+    fs::write(tmp.join("lib/libcudart.so"), "ELFPLACEHOLDER").unwrap();
+    tmp
+}
+
+#[test]
+fn place_creates_lib64_symlink_writes_meta_and_atomically_renames() {
+    let work = tempfile::tempdir().unwrap();
+    let tmp = staged_tree(work.path());
+    let dst = work.path().join("versions").join("12.4.1");
+    fs::create_dir_all(dst.parent().unwrap()).unwrap();
+
+    installer().place(&tmp, &dst, &meta()).unwrap();
+
+    // (c) atomic rename: temp tree consumed, dst exists complete.
+    assert!(
+        !tmp.exists(),
+        "temp tree must be renamed away (never-partial)"
+    );
+    assert!(dst.join("bin/nvcc").is_file());
+
+    // (a) MANDATORY lib64 -> lib symlink.
+    let lib64 = dst.join("lib64");
+    let link_meta = fs::symlink_metadata(&lib64).expect("lib64 must exist");
+    assert!(
+        link_meta.file_type().is_symlink(),
+        "lib64 must be a symlink"
+    );
+    assert_eq!(
+        fs::read_link(&lib64).unwrap(),
+        Path::new("lib"),
+        "relative lib64 -> lib"
+    );
+
+    // (d) relocatability: libcudart reachable through the symlink (what
+    // nvcc -L$(TOP)/lib64 needs).
+    assert!(
+        dst.join("lib64/libcudart.so").is_file(),
+        "lib64 symlink resolves libcudart"
+    );
+
+    // (b) sidecar meta round-trips.
+    let written: VersionMeta =
+        serde_json::from_str(&fs::read_to_string(dst.join(".cuvm-meta.json")).unwrap()).unwrap();
+    assert_eq!(written, meta());
+}
+
+#[test]
+fn place_is_never_partial_when_dst_parent_missing() {
+    // A non-existent parent must error WITHOUT leaving a half-renamed dst.
+    let work = tempfile::tempdir().unwrap();
+    let tmp = staged_tree(work.path());
+    let dst = work
+        .path()
+        .join("no")
+        .join("such")
+        .join("parent")
+        .join("12.4.1");
+    let err = installer().place(&tmp, &dst, &meta()).unwrap_err();
+    assert!(!dst.exists(), "dst must not exist after a failed place");
+    let _ = err; // an error is required; its text is impl-defined.
 }

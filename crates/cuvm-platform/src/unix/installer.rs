@@ -52,6 +52,21 @@ fn merge_tree(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Create the relative `lib64 -> lib` symlink at `lib64`. Relative (not absolute)
+/// so the tree stays relocatable after the atomic rename to `versions/<ver>`.
+#[cfg(unix)]
+fn symlink_lib64(lib64: &Path) -> Result<()> {
+    std::os::unix::fs::symlink("lib", lib64)
+        .with_context(|| format!("creating lib64 -> lib symlink at {}", lib64.display()))
+}
+
+/// Non-unix stub: the `UnixInstaller` is only constructed on unix, but this keeps
+/// the crate compiling on a windows host build of the workspace.
+#[cfg(not(unix))]
+fn symlink_lib64(_lib64: &Path) -> Result<()> {
+    anyhow::bail!("lib64 symlink is only supported on unix targets")
+}
+
 /// Unix (Linux/WSL) implementation of the `Installer` port.
 pub struct UnixInstaller {
     /// Directory under which `cuda-X.Y` dirs (+ the `cuda` symlink) are sought.
@@ -183,8 +198,31 @@ impl Installer for UnixInstaller {
         }
         Ok(tmp.to_path_buf())
     }
-    fn place(&self, _tmp: &Path, _dst: &Path, _meta: &VersionMeta) -> Result<()> {
-        Err(not_impl("UnixInstaller::place"))
+    fn place(&self, tmp: &Path, dst: &Path, meta: &VersionMeta) -> Result<()> {
+        // MANDATORY lib64 -> lib symlink: redist ships lib/, but nvcc.profile links
+        // -L$(TOP)/lib64; without it, linking fails `cannot find -lcudart`.
+        let lib = tmp.join("lib");
+        let lib64 = tmp.join("lib64");
+        if lib.is_dir() && !lib64.exists() {
+            symlink_lib64(&lib64)?;
+        }
+
+        // Write the .cuvm-meta.json sidecar INTO the staged tree, so the atomic
+        // rename publishes the metadata together with the toolkit (never-partial).
+        let meta_json =
+            serde_json::to_string_pretty(meta).context("serializing .cuvm-meta.json")?;
+        std::fs::write(tmp.join(".cuvm-meta.json"), meta_json)
+            .with_context(|| format!("writing {}/.cuvm-meta.json", tmp.display()))?;
+
+        // Atomic publish: a single rename within the same filesystem. Either
+        // versions/<ver> appears complete or it never appears at all.
+        if dst.exists() {
+            std::fs::remove_dir_all(dst)
+                .with_context(|| format!("removing existing destination {}", dst.display()))?;
+        }
+        std::fs::rename(tmp, dst)
+            .with_context(|| format!("atomic rename {} -> {}", tmp.display(), dst.display()))?;
+        Ok(())
     }
     fn smoke_test(&self, _root: &Path) -> Result<()> {
         Err(not_impl("UnixInstaller::smoke_test"))
