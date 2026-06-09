@@ -11,3 +11,9 @@
 *.swp
 /.idea/
 /.vscode/
+
+# Legacy pre-implementation design drafts — kept locally, intentionally NOT
+# published (superseded by docs/superpowers/specs/). Untracked, not deleted.
+/CUDA-Version-Manager-Research.md
+/CVM-ADRs.md
+/CVM-Design-Document.md
