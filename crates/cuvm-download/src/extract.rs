@@ -270,6 +270,103 @@ mod zip_tests {
 }
 
 #[cfg(test)]
+mod zip_slip_e2e_tests {
+    use super::*;
+    use std::io::{Cursor, Write};
+    use tempfile::tempdir;
+    use zip::write::SimpleFileOptions;
+
+    /// Write the raw bytes of `name` into a GNU tar header's name field,
+    /// bypassing `set_path`'s own `..` rejection so the stored entry carries a
+    /// literal traversal path — the attack our guard must defeat.
+    fn set_raw_name(header: &mut tar::Header, name: &[u8]) {
+        let gnu = header.as_gnu_mut().expect("gnu header");
+        gnu.name[..name.len()].copy_from_slice(name);
+    }
+
+    fn malicious_tar_xz(at: &Path) {
+        let mut tar_buf = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_buf);
+            let data = b"pwned";
+            let mut header = tar::Header::new_gnu();
+            #[allow(clippy::cast_possible_truncation)]
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            // The `tar` crate's `set_path`/`append_data` refuse a `..` path, so we
+            // write the traversal name straight into the header bytes, then append
+            // the prebuilt header (which does not re-validate the path).
+            set_raw_name(&mut header, b"../escape.txt");
+            header.set_cksum();
+            builder.append(&header, Cursor::new(&data[..])).unwrap();
+            builder.finish().unwrap();
+        }
+        let mut xz_buf = Vec::new();
+        lzma_rs::xz_compress(&mut Cursor::new(&tar_buf), &mut xz_buf).unwrap();
+        std::fs::write(at, &xz_buf).unwrap();
+    }
+
+    fn malicious_zip(at: &Path) {
+        let file = std::fs::File::create(at).unwrap();
+        let mut zw = zip::ZipWriter::new(file);
+        let opts = SimpleFileOptions::default();
+        // Preserve the literal "../escape.txt" instead of letting the writer
+        // sanitize it, so the stored name is the traversal the guard must defeat.
+        zw.start_file("../escape.txt", opts).unwrap();
+        zw.write_all(b"pwned").unwrap();
+        zw.finish().unwrap();
+    }
+
+    #[test]
+    fn tar_xz_rejects_parent_traversal_and_writes_nothing_outside() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("evil.tar.xz");
+        malicious_tar_xz(&archive);
+
+        // Prove the traversal name survived into the archive (the tar reader
+        // surfaces it verbatim), so the guard — not a malformed-archive error —
+        // is what rejects it.
+        {
+            let raw = std::fs::read(&archive).unwrap();
+            let mut decoded = Vec::new();
+            lzma_rs::xz_decompress(&mut Cursor::new(raw), &mut decoded).unwrap();
+            let mut tar = tar::Archive::new(Cursor::new(decoded));
+            let first = tar.entries().unwrap().next().unwrap().unwrap();
+            assert_eq!(first.path().unwrap().to_string_lossy(), "../escape.txt");
+        }
+
+        let dest = dir.path().join("out");
+        let err = extract_tar_xz(&archive, &dest).unwrap_err();
+        assert!(matches!(err, ExtractError::ZipSlip { .. }), "{err:?}");
+
+        // The escaped sibling of `dest` must not exist.
+        assert!(!dir.path().join("escape.txt").exists());
+    }
+
+    #[test]
+    fn zip_rejects_parent_traversal_and_writes_nothing_outside() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("evil.zip");
+        malicious_zip(&archive);
+
+        // Prove the malicious name survived into the archive (the writer did not
+        // sanitize it), so the guard — not the writer — is what rejects it.
+        {
+            let f = std::fs::File::open(&archive).unwrap();
+            let mut z = zip::ZipArchive::new(f).unwrap();
+            assert_eq!(z.by_index(0).unwrap().name(), "../escape.txt");
+        }
+
+        let dest = dir.path().join("out");
+        let err = extract_zip(&archive, &dest).unwrap_err();
+        assert!(matches!(err, ExtractError::ZipSlip { .. }), "{err:?}");
+
+        assert!(!dir.path().join("escape.txt").exists());
+    }
+}
+
+#[cfg(test)]
 mod error_tests {
     use super::*;
     use std::path::Path;
