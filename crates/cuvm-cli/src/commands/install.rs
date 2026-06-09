@@ -12,6 +12,7 @@ use cuvm_app::{
 };
 use cuvm_core::manifest::BundleRecord;
 use cuvm_core::{current_platform, Driver, GpuClass, Os, Source, Version, VersionMeta};
+use cuvm_store::{redist_cache, Layout};
 
 /// Result of installing a single spec; drives the per-target change line and the
 /// aggregate summary (§5.1/§5.4 of the spec).
@@ -108,7 +109,7 @@ pub fn run_install(
     inventory: &dyn Inventory,
     engine: &dyn CompatEngine,
     driver_probe: &dyn DriverProbe,
-    version_dir: &Path,
+    home: &Path,
     specs: &[String],
     reinstall: bool,
     force: bool,
@@ -124,7 +125,7 @@ pub fn run_install(
             inventory,
             engine,
             driver_probe,
-            version_dir,
+            home,
             spec,
             reinstall,
             force,
@@ -182,16 +183,29 @@ fn install_one(
     inventory: &dyn Inventory,
     engine: &dyn CompatEngine,
     driver_probe: &dyn DriverProbe,
-    version_dir: &Path,
+    home: &Path,
     spec: &str,
     reinstall: bool,
     force: bool,
 ) -> Result<InstallOutcome> {
     let platform = current_platform();
+    let version_dir = home.join("versions");
 
     // 1. Resolve newest patch matching `spec` from the registry.
     let mut available = registry.list_toolkits(&platform)?;
     available.sort();
+
+    // Warm the redist-index cache after a successful live fetch (§6.2): a later
+    // `cuvm ls` then renders the available rows offline. Best-effort — a
+    // cache-write failure must never fail the install.
+    let layout = Layout::new(home);
+    let _ = redist_cache::write(
+        &layout,
+        &platform,
+        &available,
+        time::OffsetDateTime::now_utc(),
+    );
+
     let want = available
         .iter()
         .rev()

@@ -304,7 +304,7 @@ impl Command {
                     deps.inventory.as_ref(),
                     deps.compat.as_ref(),
                     deps.driver.as_ref(),
-                    &deps.home.join("versions"),
+                    &deps.home,
                     &specs,
                     reinstall,
                     force,
