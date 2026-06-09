@@ -45,11 +45,9 @@ impl ProgressReporter for CliReporter {
                 Some(len) => {
                     let pb = ProgressBar::new(len);
                     pb.set_style(
-                        ProgressStyle::with_template(
-                            "{msg:>24} [{bar:30}] {bytes}/{total_bytes}",
-                        )
-                        .unwrap()
-                        .progress_chars("=> "),
+                        ProgressStyle::with_template("{msg:>24} [{bar:30}] {bytes}/{total_bytes}")
+                            .unwrap()
+                            .progress_chars("=> "),
                     );
                     pb
                 }
@@ -59,8 +57,8 @@ impl ProgressReporter for CliReporter {
             self.bars.lock().unwrap().insert(label.to_string(), bar);
         } else {
             // Integer MiB avoids clippy::cast_precision_loss under -D warnings.
-            let size = total_bytes
-                .map_or_else(String::new, |b| format!(" ({} MiB)", b / (1024 * 1024)));
+            let size =
+                total_bytes.map_or_else(String::new, |b| format!(" ({} MiB)", b / (1024 * 1024)));
             eprintln!("Downloading {label}{size}");
         }
     }

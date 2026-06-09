@@ -106,7 +106,13 @@ impl Downloader {
 
         // --- DOWNLOAD-INTO-PART SEAM: resume if a .part survives a prior run. ---
         let resume_from = fs::metadata(&part_path).map_or(0, |m| m.len());
-        http_into_part(url, &part_path, resume_from, self.reporter.as_ref(), file_name)?;
+        http_into_part(
+            url,
+            &part_path,
+            resume_from,
+            self.reporter.as_ref(),
+            file_name,
+        )?;
         // --- END SEAM ---
 
         // Verify, then atomically expose under the final name — or keep nothing.
@@ -256,7 +262,8 @@ mod progress_tests {
         let cache = tempfile::tempdir().unwrap();
         let rec = Arc::new(Recorder::default());
         let dl = Downloader::with_reporter(cache.path().to_path_buf(), rec.clone());
-        dl.fetch(&server.url("/blob.bin"), &sha, "blob.bin").unwrap();
+        dl.fetch(&server.url("/blob.bin"), &sha, "blob.bin")
+            .unwrap();
 
         let events = rec.events.lock().unwrap();
         assert!(
@@ -267,9 +274,6 @@ mod progress_tests {
             events.iter().any(|e| e.starts_with("advance:blob.bin")),
             "{events:?}"
         );
-        assert!(
-            events.iter().any(|e| e == "finish:blob.bin"),
-            "{events:?}"
-        );
+        assert!(events.iter().any(|e| e == "finish:blob.bin"), "{events:?}");
     }
 }
