@@ -12,3 +12,4 @@ pub mod error;
 pub mod http;
 
 pub use error::{DownloadError, Result};
+pub use http::http_get;
