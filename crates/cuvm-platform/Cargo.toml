@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 cuvm-core = { path = "../cuvm-core" }
 cuvm-app = { path = "../cuvm-app" }
+cuvm-download = { path = "../cuvm-download" }
 anyhow = { workspace = true }
 time = { workspace = true, features = ["std"] }
 
