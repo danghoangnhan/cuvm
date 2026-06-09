@@ -16,8 +16,8 @@ use cuvm_core::{Os, Shell};
 /// # Errors
 /// Propagates resolution errors for explicit specs.  The cwd-branch silently
 /// falls through to deactivate on `NotInstalled` / missing default.
-pub fn run(resolver: &dyn Resolver, spec: Option<&str>, shell: Shell) -> Result<()> {
-    let activator = cuvm_platform::new_activator(Os::Linux);
+pub fn run(resolver: &dyn Resolver, spec: Option<&str>, shell: Shell, os: Os) -> Result<()> {
+    let activator = cuvm_platform::new_activator(os);
 
     let outcome = match spec {
         None | Some("" | ".") => {

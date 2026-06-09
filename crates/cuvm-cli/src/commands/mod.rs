@@ -14,7 +14,7 @@ pub mod which;
 use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 
-use cuvm_core::Shell;
+use cuvm_core::{Os, Shell};
 
 use crate::composition::Deps;
 
@@ -36,6 +36,32 @@ impl From<ShellArg> for Shell {
             ShellArg::PowerShell => Shell::PowerShell,
             ShellArg::Cmd => Shell::Cmd,
         }
+    }
+}
+
+/// clap-facing OS override for the hidden `env`/`hook` plumbing commands. Lets
+/// the Linux CI lane drive the runtime-dispatched Windows activator (WU-9).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum OsArg {
+    Linux,
+    Windows,
+}
+
+impl From<OsArg> for Os {
+    fn from(o: OsArg) -> Self {
+        match o {
+            OsArg::Linux => Os::Linux,
+            OsArg::Windows => Os::Windows,
+        }
+    }
+}
+
+/// Resolve the effective OS for emission: explicit `--os` wins, else host OS.
+fn resolve_os(os: Option<OsArg>) -> Os {
+    match os {
+        Some(o) => o.into(),
+        None if cfg!(windows) => Os::Windows,
+        None => Os::Linux,
     }
 }
 
@@ -128,6 +154,9 @@ pub enum Command {
     Hook {
         #[arg(long, value_enum)]
         shell: ShellArg,
+        /// Override the emission OS (defaults to the host); used by CI/tests.
+        #[arg(long, value_enum)]
+        os: Option<OsArg>,
     },
     /// Print the env-mutation script for `<spec>` (shim-only).
     #[command(hide = true)]
@@ -136,6 +165,9 @@ pub enum Command {
         spec: Option<String>,
         #[arg(long, value_enum)]
         shell: ShellArg,
+        /// Override the emission OS (defaults to the host); used by CI/tests.
+        #[arg(long, value_enum)]
+        os: Option<OsArg>,
     },
 }
 
@@ -198,13 +230,18 @@ impl Command {
                 println!("deregistered {spec}");
                 Ok(0)
             }
-            Command::Hook { shell } => {
-                hook::run(shell.into())?;
+            Command::Hook { shell, os } => {
+                hook::run(shell.into(), resolve_os(os))?;
                 Ok(0)
             }
-            Command::Env { spec, shell } => {
+            Command::Env { spec, shell, os } => {
                 let resolver = crate::wiring::resolver()?;
-                env::run(resolver.as_ref(), spec.as_deref(), shell.into())?;
+                env::run(
+                    resolver.as_ref(),
+                    spec.as_deref(),
+                    shell.into(),
+                    resolve_os(os),
+                )?;
                 Ok(0)
             }
         }
@@ -213,18 +250,20 @@ impl Command {
 
 /// Build the unix installer, honouring `CUVM_SCAN_ROOT` (tests) over `/usr/local`.
 fn build_installer() -> Box<dyn cuvm_app::Installer> {
-    use cuvm_core::{Arch, Os, Platform};
-    let platform = Platform {
-        os: Os::Linux,
-        arch: Arch::X86_64,
-    };
-    match adopt::scan_root_override() {
-        #[cfg(unix)]
-        Some(root) => Box::new(cuvm_platform::unix::UnixInstaller::with_scan_root(
+    // The CUVM_SCAN_ROOT override is unix-only; on other targets fall straight
+    // through to the factory (keeps `platform` from being unused off-unix).
+    #[cfg(unix)]
+    if let Some(root) = adopt::scan_root_override() {
+        use cuvm_core::{Arch, Os, Platform};
+        let platform = Platform {
+            os: Os::Linux,
+            arch: Arch::X86_64,
+        };
+        return Box::new(cuvm_platform::unix::UnixInstaller::with_scan_root(
             root, platform,
-        )),
-        _ => cuvm_platform::new_installer(Os::Linux),
+        ));
     }
+    cuvm_platform::new_installer(cuvm_core::Os::Linux)
 }
 
 /// `ls` implementation using `Deps` (marks default alias with `*`).

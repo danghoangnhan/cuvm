@@ -9,8 +9,8 @@ use cuvm_core::{Os, Shell};
 ///
 /// # Errors
 /// Propagates any error from the activator's `hook` method.
-pub fn run(shell: Shell) -> Result<()> {
-    let activator = cuvm_platform::new_activator(Os::Linux);
+pub fn run(shell: Shell, os: Os) -> Result<()> {
+    let activator = cuvm_platform::new_activator(os);
     let script = activator.hook(shell)?;
     print!("{script}");
     Ok(())
