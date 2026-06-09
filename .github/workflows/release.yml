@@ -1,0 +1,104 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write # create the GitHub Release + upload assets
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            target: x86_64-unknown-linux-musl
+            bin: cuvm
+            archive: tar.gz
+          - name: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            bin: cuvm
+            archive: tar.gz
+          - name: windows-amd64
+            target: x86_64-pc-windows-gnu
+            bin: cuvm.exe
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (stable + target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+      - name: Install cargo-zigbuild
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - name: Cross-compile release binary
+        run: cargo zigbuild -p cuvm-cli --release --target ${{ matrix.target }}
+      - name: Stage + archive
+        id: pkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          stage="cuvm-${ver}-${{ matrix.name }}"
+          mkdir -p "dist/${stage}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "dist/${stage}/"
+          cp -r shims "dist/${stage}/"
+          cp LICENSE-MIT LICENSE-APACHE README.md "dist/${stage}/"
+          cd dist
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            zip -r "${stage}.zip" "${stage}" >/dev/null
+          else
+            tar czf "${stage}.tar.gz" "${stage}"
+          fi
+          rm -rf "${stage}"
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuvm-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum cuvm-*.tar.gz cuvm-*.zip > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/cuvm-*.tar.gz
+            dist/cuvm-*.zip
+            dist/SHA256SUMS
