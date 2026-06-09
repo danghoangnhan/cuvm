@@ -269,3 +269,40 @@ fn uninstall_adopted_deregisters_but_keeps_files() {
     let manifest = std::fs::read_to_string(home.child("manifest.json").path()).unwrap();
     assert!(!manifest.contains("\"12.4.1\""), "{manifest}");
 }
+
+#[test]
+fn help_lists_m2_commands() {
+    cuvm()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(contains("install"))
+        .stdout(contains("ls-remote"))
+        .stdout(contains("uninstall"));
+}
+
+#[test]
+fn install_help_documents_cudnn_flags_as_noop() {
+    cuvm()
+        .args(["install", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--cudnn"))
+        .stdout(contains("--no-cudnn"))
+        .stdout(contains("--force"))
+        .stdout(contains("M2"));
+}
+
+#[test]
+fn install_cudnn_flag_parses_without_error_in_m2() {
+    // Unknown registry => the no-op cudnn flag must still parse; the command
+    // fails later at the network step, not at arg parsing.
+    let home = TempDir::new().unwrap();
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .env("CUVM_REGISTRY_URL", "http://127.0.0.1:1/redist/")
+        .args(["install", "12.4", "--cudnn", "9.8.0"])
+        .assert()
+        .failure() // network failure, NOT a clap parse error
+        .stderr(contains("cuvm:"));
+}
