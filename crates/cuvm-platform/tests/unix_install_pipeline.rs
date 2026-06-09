@@ -260,3 +260,66 @@ fn smoke_test_real_nvcc_compile_link() {
         .smoke_test(&root)
         .expect("real toolkit must compile+link cudart");
 }
+
+#[cfg(unix)]
+#[test]
+fn full_pipeline_extract_place_smoke_on_fixtures() {
+    let work = tempfile::tempdir().unwrap();
+    // Fixture redist tarballs: nvcc (a stub that "succeeds") + cudart lib.
+    let nvcc_tar = make_redist_tarxz(
+        work.path(),
+        "cuda_nvcc-linux-x86_64-12.4.131-archive.tar.xz",
+        "cuda_nvcc-linux-x86_64-12.4.131-archive",
+        &[
+            (
+                "bin/nvcc",
+                "#!/bin/sh\nout=''\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = \"-o\" ]; then shift; out=\"$1\"; fi\n  shift\ndone\nif [ -n \"$out\" ]; then : > \"$out\"; fi\nexit 0\n",
+            ),
+            ("bin/nvcc.profile", "TOP=$(_HERE_)/..\n"),
+        ],
+    );
+    let cudart_tar = make_redist_tarxz(
+        work.path(),
+        "cuda_cudart-linux-x86_64-12.4.131-archive.tar.xz",
+        "cuda_cudart-linux-x86_64-12.4.131-archive",
+        &[("lib/libcudart.so", "ELFPLACEHOLDER")],
+    );
+    let arts = vec![
+        cached(nvcc_tar, "cuda_nvcc"),
+        cached(cudart_tar, "cuda_cudart"),
+    ];
+
+    let i = installer();
+    let tmp = work.path().join(".tmp-12.4.1");
+    let merged = i.extract_atomic(&arts, &tmp).unwrap();
+
+    // nvcc fixture must be executable after extraction for the smoke test to run it.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let nvcc = merged.join("bin/nvcc");
+        let mut perms = fs::metadata(&nvcc).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&nvcc, perms).unwrap();
+    }
+
+    let dst = work.path().join("versions").join("12.4.1");
+    fs::create_dir_all(dst.parent().unwrap()).unwrap();
+    i.place(&merged, &dst, &meta()).unwrap();
+
+    // Placed tree: complete + lib64 symlink + sidecar meta.
+    assert!(dst.join("bin/nvcc").is_file());
+    assert!(fs::symlink_metadata(dst.join("lib64"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(dst.join("lib64/libcudart.so").is_file());
+    assert!(dst.join(".cuvm-meta.json").is_file());
+    assert!(
+        !tmp.exists(),
+        "never-partial: temp tree consumed by atomic rename"
+    );
+
+    // Smoke test against the placed stub-nvcc install passes.
+    i.smoke_test(&dst)
+        .expect("placed fixture toolkit passes the smoke test");
+}
