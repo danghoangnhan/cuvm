@@ -167,6 +167,140 @@ pub fn recommended_components(
         .collect()
 }
 
+use cuvm_core::{Platform, Version};
+
+/// The production CUDA redist base URL (trailing slash required).
+const DEFAULT_BASE_URL: &str = "https://developer.download.nvidia.com/compute/cuda/redist/";
+
+/// Default `cuvm_app::RegistryClient`: scrapes the redist index and resolves
+/// `redistrib_<ver>.json` manifests into `Artifact`s. All HTTP goes through
+/// `cuvm_download::http_get`.
+#[derive(Debug, Clone)]
+pub struct DefaultRegistryClient {
+    base_url: String,
+}
+
+impl Default for DefaultRegistryClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DefaultRegistryClient {
+    /// Build a client pointed at the production redist base URL.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            base_url: DEFAULT_BASE_URL.to_string(),
+        }
+    }
+
+    /// Build a client pointed at a custom base URL (a trailing `/` is enforced).
+    /// Tests point this at an `httpmock` server.
+    #[must_use]
+    pub fn with_base_url(url: String) -> Self {
+        let base_url = if url.ends_with('/') {
+            url
+        } else {
+            format!("{url}/")
+        };
+        Self { base_url }
+    }
+
+    /// Fetch a URL as UTF-8 text via `cuvm_download::http_get`.
+    fn get_text(url: &str) -> RegistryResult<String> {
+        let bytes = cuvm_download::http_get(url).map_err(|e| RegistryError::Http(e.to_string()))?;
+        String::from_utf8(bytes).map_err(|e| RegistryError::Http(e.to_string()))
+    }
+}
+
+/// Extract every distinct `X.Y.Z` from `redistrib_<X.Y.Z>.json` substrings in `html`.
+/// Pure string walk — no regex/HTML dependency.
+fn scrape_redistrib_versions(html: &str) -> Vec<String> {
+    const PREFIX: &str = "redistrib_";
+    const SUFFIX: &str = ".json";
+    let mut out: Vec<String> = Vec::new();
+    let mut rest = html;
+    while let Some(start) = rest.find(PREFIX) {
+        let after = &rest[start + PREFIX.len()..];
+        if let Some(end) = after.find(SUFFIX) {
+            let ver = &after[..end];
+            // Accept only dotted-numeric version bodies (guards against false hits).
+            if !ver.is_empty()
+                && ver.chars().all(|c| c.is_ascii_digit() || c == '.')
+                && ver.contains('.')
+            {
+                let owned = ver.to_string();
+                if !out.contains(&owned) {
+                    out.push(owned);
+                }
+            }
+            rest = &after[end + SUFFIX.len()..];
+        } else {
+            rest = after;
+        }
+    }
+    out
+}
+
+impl cuvm_app::RegistryClient for DefaultRegistryClient {
+    fn list_toolkits(&self, _p: &Platform) -> anyhow::Result<Vec<Version>> {
+        // NVIDIA serves the redist directory listing at the base URL itself.
+        let index_url = self.base_url.clone();
+        let html = Self::get_text(&index_url)?;
+        let mut versions: Vec<Version> = scrape_redistrib_versions(&html)
+            .into_iter()
+            .filter_map(|s| Version::parse(&s).ok())
+            .collect();
+        if versions.is_empty() {
+            return Err(RegistryError::EmptyIndex { url: index_url }.into());
+        }
+        versions.sort();
+        versions.dedup();
+        Ok(versions)
+    }
+
+    fn list_cudnn(&self, _p: &Platform, _major: u32) -> anyhow::Result<Vec<Version>> {
+        // cuDNN registry listing lands in M3; M2 install path does not call this.
+        anyhow::bail!("list_cudnn is not implemented in M2")
+    }
+
+    fn resolve_toolkit(
+        &self,
+        v: &Version,
+        p: &Platform,
+        want: &cuvm_app::ComponentPolicy,
+    ) -> anyhow::Result<Vec<cuvm_app::Artifact>> {
+        // `Platform` is small + `Copy`; pass by value into the helper so clippy's
+        // `trivially_copy_pass_by_ref` is satisfied on the private signature.
+        self.resolve_toolkit_impl(v, *p, want).map_err(Into::into)
+    }
+
+    fn resolve_cudnn(
+        &self,
+        _v: &Version,
+        _p: &Platform,
+        _major: u32,
+    ) -> anyhow::Result<Vec<cuvm_app::Artifact>> {
+        anyhow::bail!("resolve_cudnn is not implemented in M2")
+    }
+}
+
+impl DefaultRegistryClient {
+    // Temporary placeholder replaced by the real implementation in Task 10.5; the
+    // allows below keep this transient stub clippy-clean until then.
+    #[allow(clippy::unused_self, clippy::unnecessary_wraps)]
+    fn resolve_toolkit_impl(
+        &self,
+        _v: &Version,
+        _p: Platform,
+        _want: &cuvm_app::ComponentPolicy,
+    ) -> RegistryResult<Vec<cuvm_app::Artifact>> {
+        // Implemented in Task 10.5.
+        Ok(Vec::new())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
