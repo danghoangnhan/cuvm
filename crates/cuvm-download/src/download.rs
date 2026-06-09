@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::error::{DownloadError, Result};
+use crate::progress::{silent, Reporter};
 
 /// Stream a file through SHA-256 and return its lowercase hex digest.
 ///
@@ -48,16 +49,31 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 /// A content-addressed download cache. `fetch` is resumable and sha256-verified;
 /// a re-fetch of an already-complete, already-correct file is a no-op.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Downloader {
     cache_dir: PathBuf,
+    reporter: Reporter,
 }
 
 impl Downloader {
-    /// Create a downloader writing into `cache_dir` (created on first `fetch`).
+    /// Create a downloader with the silent (no-op) reporter.
+    ///
+    /// Writes into `cache_dir` (created on first `fetch`).
     #[must_use]
     pub fn new(cache_dir: PathBuf) -> Self {
-        Self { cache_dir }
+        Self {
+            cache_dir,
+            reporter: silent(),
+        }
+    }
+
+    /// Create a downloader that reports progress to `reporter`.
+    #[must_use]
+    pub fn with_reporter(cache_dir: PathBuf, reporter: Reporter) -> Self {
+        Self {
+            cache_dir,
+            reporter,
+        }
     }
 
     /// Download `url` into `cache_dir/<file_name>`, verifying it matches
@@ -90,7 +106,7 @@ impl Downloader {
 
         // --- DOWNLOAD-INTO-PART SEAM: resume if a .part survives a prior run. ---
         let resume_from = fs::metadata(&part_path).map_or(0, |m| m.len());
-        http_into_part(url, &part_path, resume_from)?;
+        http_into_part(url, &part_path, resume_from, self.reporter.as_ref(), file_name)?;
         // --- END SEAM ---
 
         // Verify, then atomically expose under the final name — or keep nothing.
@@ -108,6 +124,7 @@ impl Downloader {
             path: final_path.clone(),
             source,
         })?;
+        self.reporter.on_download_finish(file_name);
         Ok(final_path)
     }
 }
@@ -116,7 +133,13 @@ impl Downloader {
 /// bytes=<resume_from>-` and append a `206` tail to the existing `.part`; on a
 /// `200` (server ignored `Range`) truncate and write the whole body so a stale
 /// `.part` can never corrupt the result.
-fn http_into_part(url: &str, part_path: &Path, resume_from: u64) -> Result<()> {
+fn http_into_part(
+    url: &str,
+    part_path: &Path,
+    resume_from: u64,
+    reporter: &dyn crate::progress::ProgressReporter,
+    label: &str,
+) -> Result<()> {
     let req = ureq::get(url);
     let req = if resume_from > 0 {
         req.set("Range", &format!("bytes={resume_from}-"))
@@ -139,6 +162,12 @@ fn http_into_part(url: &str, part_path: &Path, resume_from: u64) -> Result<()> {
             })
         }
     };
+
+    let total = resp
+        .header("Content-Length")
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(|len| len + resume_from);
+    reporter.on_download_start(label, total);
 
     // 206 => append to the existing .part; anything else (200) => rewrite it.
     let append = resp.status() == 206 && resume_from > 0;
@@ -168,6 +197,7 @@ fn http_into_part(url: &str, part_path: &Path, resume_from: u64) -> Result<()> {
                 path: part_path.to_path_buf(),
                 source,
             })?;
+        reporter.on_download_advance(label, n as u64);
     }
     file.flush().map_err(|source| DownloadError::Io {
         path: part_path.to_path_buf(),
@@ -200,6 +230,46 @@ mod sha_tests {
         assert_eq!(
             got,
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::Downloader;
+    use crate::progress::recording::Recorder;
+    use std::sync::Arc;
+
+    #[test]
+    fn fetch_reports_start_advance_finish() {
+        use httpmock::prelude::*;
+        use sha2::{Digest, Sha256};
+
+        let body = vec![7u8; 4096];
+        let sha = format!("{:x}", Sha256::digest(&body));
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/blob.bin");
+            then.status(200).body(body.clone());
+        });
+
+        let cache = tempfile::tempdir().unwrap();
+        let rec = Arc::new(Recorder::default());
+        let dl = Downloader::with_reporter(cache.path().to_path_buf(), rec.clone());
+        dl.fetch(&server.url("/blob.bin"), &sha, "blob.bin").unwrap();
+
+        let events = rec.events.lock().unwrap();
+        assert!(
+            events.iter().any(|e| e.starts_with("start:blob.bin")),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|e| e.starts_with("advance:blob.bin")),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|e| e == "finish:blob.bin"),
+            "{events:?}"
         );
     }
 }
