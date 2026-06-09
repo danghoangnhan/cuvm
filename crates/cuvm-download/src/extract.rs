@@ -6,7 +6,7 @@
 //! [`safe_join`], a zip-slip guard that rejects `..` traversal and absolute paths.
 
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::{copy, Cursor, Read};
 use std::path::{Component, Path, PathBuf};
 
 use thiserror::Error;
@@ -112,6 +112,40 @@ pub fn extract_tar_xz(archive: &Path, dest: &Path) -> Result<(), ExtractError> {
     Ok(())
 }
 
+/// Unpack a `.zip` into `dest` using the `zip` crate.
+///
+/// Every entry is routed through [`safe_join`] (not the archive's own
+/// `enclosed_name`), so the same zip-slip guard that protects the tar path also
+/// rejects a `..` traversal or absolute entry here. `dest` is created
+/// (recursively) if it does not exist.
+///
+/// # Errors
+/// Returns [`ExtractError::Zip`] on a malformed archive, [`ExtractError::ZipSlip`]
+/// if any entry escapes `dest`, or [`ExtractError::Io`] on filesystem failure.
+pub fn extract_zip(archive: &Path, dest: &Path) -> Result<(), ExtractError> {
+    let file = fs::File::open(archive)?;
+    let mut zip = zip::ZipArchive::new(file)?;
+    fs::create_dir_all(dest)?;
+
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i)?;
+        let raw_name = entry.name().to_string();
+        // Re-run the name through our own guard (do not trust the archive).
+        let target = safe_join(dest, &raw_name)?;
+
+        if entry.is_dir() {
+            fs::create_dir_all(&target)?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut out = fs::File::create(&target)?;
+        copy(&mut entry, &mut out)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tar_xz_tests {
     use super::*;
@@ -173,6 +207,63 @@ mod tar_xz_tests {
 
         let dest = dir.path().join("nested/does/not/exist");
         extract_tar_xz(&archive, &dest).unwrap();
+
+        assert!(dest.join("include/cuda.h").is_file());
+    }
+}
+
+#[cfg(test)]
+mod zip_tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+    use zip::write::SimpleFileOptions;
+
+    /// Build a `.zip` at `at` from `(path, bytes)` entries.
+    fn write_zip(at: &Path, entries: &[(&str, &[u8])]) {
+        let file = std::fs::File::create(at).unwrap();
+        let mut zw = zip::ZipWriter::new(file);
+        let opts = SimpleFileOptions::default();
+        for (name, data) in entries {
+            zw.start_file(*name, opts).unwrap();
+            zw.write_all(data).unwrap();
+        }
+        zw.finish().unwrap();
+    }
+
+    #[test]
+    fn extracts_files_with_contents() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("comp.zip");
+        write_zip(
+            &archive,
+            &[
+                ("bin/nvcc.exe", b"MZ-fake"),
+                ("lib/x64/cudart.lib", b"libdata"),
+            ],
+        );
+
+        let dest = dir.path().join("out");
+        extract_zip(&archive, &dest).unwrap();
+
+        assert_eq!(
+            std::fs::read(dest.join("bin/nvcc.exe")).unwrap(),
+            b"MZ-fake"
+        );
+        assert_eq!(
+            std::fs::read(dest.join("lib/x64/cudart.lib")).unwrap(),
+            b"libdata"
+        );
+    }
+
+    #[test]
+    fn creates_dest_when_missing() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("comp.zip");
+        write_zip(&archive, &[("include/cuda.h", b"#pragma once")]);
+
+        let dest = dir.path().join("nested/missing");
+        extract_zip(&archive, &dest).unwrap();
 
         assert!(dest.join("include/cuda.h").is_file());
     }
