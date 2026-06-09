@@ -117,7 +117,7 @@ impl Installer for WindowsInstaller {
             version: c.version.clone(),
             source: Source::Adopted,
             root,
-            platform: c.platform, // Platform is Copy
+            platform: c.platform,   // Platform is Copy
             components: Vec::new(), // adopted: components unknown, not manifest-driven
             has_lib64: false,       // Windows uses lib\x64; lib64 symlink is Linux-only
             installed_at: OffsetDateTime::now_utc(),

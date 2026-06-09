@@ -44,12 +44,25 @@ mod sys {
     fn read_user_path() -> Result<String> {
         unsafe {
             let mut hkey = HKEY::default();
-            RegOpenKeyExW(HKEY_CURRENT_USER, w!("Environment"), 0, KEY_READ, &raw mut hkey).ok()?;
+            RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                w!("Environment"),
+                0,
+                KEY_READ,
+                &raw mut hkey,
+            )
+            .ok()?;
             let name = to_utf16("Path");
             // First call sizes the value (bytes).
             let mut size: u32 = 0;
-            let _ =
-                RegQueryValueExW(hkey, PCWSTR(name.as_ptr()), None, None, None, Some(&raw mut size));
+            let _ = RegQueryValueExW(
+                hkey,
+                PCWSTR(name.as_ptr()),
+                None,
+                None,
+                None,
+                Some(&raw mut size),
+            );
             // A u16 buffer is 2-aligned; passing it down as *u8 is never over-aligned.
             let mut buf = vec![0u16; (size as usize / 2) + 1];
             let mut got = size;
@@ -81,7 +94,14 @@ mod sys {
         let next = super::compute_user_path(&old, new_bin, prior_bin);
         unsafe {
             let mut hkey = HKEY::default();
-            RegOpenKeyExW(HKEY_CURRENT_USER, w!("Environment"), 0, KEY_WRITE, &raw mut hkey).ok()?;
+            RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                w!("Environment"),
+                0,
+                KEY_WRITE,
+                &raw mut hkey,
+            )
+            .ok()?;
             let data = to_utf16(&next);
             let bytes = std::slice::from_raw_parts(
                 data.as_ptr().cast::<u8>(),

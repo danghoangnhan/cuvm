@@ -21,7 +21,10 @@ fn switching_default_strips_prior_cuvm_bin_no_dup() {
     let new_bin = r"C:\Users\dev\.cuvm\current\bin"; // same junction path
     let prior = Some(r"C:\Users\dev\.cuvm\current\bin");
     let result = compute_user_path(old, new_bin, prior);
-    assert_eq!(result, r"C:\Users\dev\.cuvm\current\bin;C:\Windows;C:\Tools");
+    assert_eq!(
+        result,
+        r"C:\Users\dev\.cuvm\current\bin;C:\Windows;C:\Tools"
+    );
     assert_eq!(
         result.matches(r".cuvm\current\bin").count(),
         1,
