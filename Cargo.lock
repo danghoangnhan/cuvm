@@ -674,6 +674,7 @@ dependencies = [
  "tempfile",
  "time",
  "windows",
+ "zip",
 ]
 
 [[package]]

@@ -32,3 +32,6 @@ assert_fs = { workspace = true }
 insta = { workspace = true }
 predicates = { workspace = true }
 time = { workspace = true, features = ["std", "macros"] }
+tempfile = { workspace = true }
+zip = { workspace = true }
+cuvm-download = { path = "../cuvm-download" }

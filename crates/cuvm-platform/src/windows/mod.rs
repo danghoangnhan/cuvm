@@ -11,4 +11,4 @@ pub mod junction;
 pub mod persist;
 
 pub use activator::WindowsActivator;
-pub use installer::WindowsInstaller;
+pub use installer::{WindowsAcquireOutcome, WindowsInstaller};
