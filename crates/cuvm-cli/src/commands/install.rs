@@ -2,10 +2,16 @@
 //!
 //! `--cudnn`/`--no-cudnn` parse here but are **no-ops in M2**: cuDNN pairing is M3.
 
+use std::path::Path;
+
 use anyhow::Result;
 
-use cuvm_app::{CompatEngine, RegistryClient, Severity};
-use cuvm_core::{current_platform, Driver, GpuClass, Version};
+use cuvm_app::{
+    AcquirePlan, CompatEngine, ComponentPolicy, DriverProbe, Installer, Inventory, RegistryClient,
+    Severity,
+};
+use cuvm_core::manifest::BundleRecord;
+use cuvm_core::{current_platform, Driver, GpuClass, Os, Source, Version, VersionMeta};
 
 /// `cuvm ls-remote`: print available toolkit versions, newest first.
 ///
@@ -81,6 +87,182 @@ pub fn compat_gate(
         reason: verdict.reason,
         hint: format!("re-run with --force to install anyway. (cuda-compat){compat_note}"),
     }
+}
+
+/// `cuvm install <ver> [--force]`: resolve newest patch, compat-gate, acquire,
+/// verify, extract, place, smoke-test, then record a `Downloaded` manifest bundle.
+///
+/// `cudnn`/`no_cudnn` are accepted but ignored in M2 (cuDNN pairing is M3).
+///
+/// # Errors
+/// Returns an error if resolution, the compat gate (without `--force`), download,
+/// verification, extraction, placement, the smoke test, or manifest I/O fails.
+#[allow(clippy::too_many_arguments)]
+pub fn run_install(
+    registry: &dyn RegistryClient,
+    installer: &dyn Installer,
+    inventory: &dyn Inventory,
+    engine: &dyn CompatEngine,
+    driver_probe: &dyn DriverProbe,
+    version_dir: &Path,
+    spec: &str,
+    force: bool,
+) -> Result<()> {
+    let platform = current_platform();
+
+    // 1. Resolve newest patch matching `spec` from the registry.
+    let mut available = registry.list_toolkits(&platform)?;
+    available.sort();
+    let want = available
+        .iter()
+        .rev()
+        .find(|v| version_matches(spec, v))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("no remote toolkit matches `{spec}`"))?;
+
+    // 2. Driver-ceiling compat gate (warn + --force; never hard-block).
+    let driver = driver_probe.probe()?;
+    if let GateOutcome::Refused { reason, hint } = compat_gate(engine, &driver, &want, force) {
+        anyhow::bail!("{reason}\nhint: {hint}");
+    }
+
+    // 3. Resolve component artifacts and build the acquire plan.
+    let artifacts = registry.resolve_toolkit(&want, &platform, &ComponentPolicy::Recommended)?;
+    let handle = want.raw.clone();
+    let plan = AcquirePlan {
+        artifacts,
+        dest_handle: handle.clone(),
+    };
+
+    // 4. acquire -> verify -> extract(tmp) -> place(dst) -> smoke_test.
+    //
+    // Windows degrade-to-adopt handoff (spec §2.2): when the resolved windows-x86_64
+    // component set is empty (CUDA >= 13.0 is Windows-N/A) or a download is blocked
+    // by enterprise lockdown, fall back to the M1 adopt path rather than hard-failing.
+    // The Linux ship-gate e2e never exercises this; a Windows-runner test is WU-19.
+    #[cfg(not(unix))]
+    if plan.artifacts.is_empty() {
+        return degrade_to_adopt(
+            installer,
+            inventory,
+            &handle,
+            &format!("no windows-x86_64 redist components resolved for {handle}"),
+        );
+    }
+    let cached = match installer.acquire(&plan) {
+        Ok(c) => c,
+        #[cfg(not(unix))]
+        Err(e) => {
+            return degrade_to_adopt(
+                installer,
+                inventory,
+                &handle,
+                &format!("windows download blocked, degrading to adopt-only: {e}"),
+            );
+        }
+        #[cfg(unix)]
+        Err(e) => return Err(e),
+    };
+    installer.verify(&cached)?;
+
+    let dst = version_dir.join(&handle);
+    let tmp = version_dir.join(format!(".tmp-{handle}"));
+    if tmp.exists() {
+        std::fs::remove_dir_all(&tmp)?;
+    }
+    std::fs::create_dir_all(&tmp)?;
+    let extracted = installer.extract_atomic(&cached, &tmp)?;
+
+    let components: Vec<String> = plan.artifacts.iter().map(|a| a.component.clone()).collect();
+    let installed_at = time::OffsetDateTime::now_utc();
+    let meta = VersionMeta {
+        version: handle.clone(),
+        source: Source::Downloaded,
+        cudnn: None,
+        components: components.clone(),
+        sha256: None,
+        has_lib64: matches!(platform.os, Os::Linux),
+        installed_at,
+    };
+    installer.place(&extracted, &dst, &meta)?;
+
+    if std::env::var_os("CUVM_SKIP_SMOKE").is_none() {
+        installer.smoke_test(&dst)?;
+    }
+
+    // 5. Record a Downloaded bundle (path is `versions/<handle>`, relative to home).
+    let mut manifest = inventory.load()?;
+    let record = BundleRecord {
+        version: handle.clone(),
+        source: Source::Downloaded,
+        path: format!("versions/{handle}"),
+        cudnn: None,
+        components,
+        sha256: None,
+        installed_at,
+    };
+    manifest.bundles.retain(|b| b.version != record.version);
+    manifest.bundles.push(record);
+    inventory.save(&manifest)?;
+
+    println!("installed {handle}");
+    Ok(())
+}
+
+/// Windows-only: degrade a blocked/empty download into the M1 read-only adopt
+/// path. Scans for an in-place toolkit matching the wanted handle and records an
+/// `Adopted` bundle (referenced-in-place, never deleted — ADR-005).
+#[cfg(not(unix))]
+fn degrade_to_adopt(
+    installer: &dyn Installer,
+    inventory: &dyn Inventory,
+    handle: &str,
+    reason: &str,
+) -> Result<()> {
+    eprintln!("cuvm: warning: {reason}; falling back to adopt-only.");
+    let candidates = installer.scan()?;
+    let candidate = candidates
+        .into_iter()
+        .find(|c| c.version.raw == handle)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot download {handle} and no matching in-place toolkit found to adopt"
+            )
+        })?;
+    let bundle = installer.adopt(&candidate)?;
+    let mut manifest = inventory.load()?;
+    let record = BundleRecord {
+        version: bundle.toolkit.version.raw.clone(),
+        source: Source::Adopted,
+        path: bundle.toolkit.root.display().to_string(),
+        cudnn: None,
+        components: bundle.toolkit.components.clone(),
+        sha256: bundle.toolkit.checksum.clone(),
+        installed_at: bundle.toolkit.installed_at,
+    };
+    manifest.bundles.retain(|b| b.version != record.version);
+    manifest.bundles.push(record);
+    inventory.save(&manifest)?;
+    println!(
+        "adopted {} ({})",
+        bundle.toolkit.version.raw,
+        bundle.toolkit.root.display()
+    );
+    Ok(())
+}
+
+/// Whether `version` satisfies `spec` (exact `X.Y.Z`, minor `X.Y`, major `X`, or
+/// `latest`). The caller iterates newest-first, so the first match is the newest.
+fn version_matches(spec: &str, version: &Version) -> bool {
+    if spec == "latest" {
+        return true;
+    }
+    let want: Vec<&str> = spec.split('.').collect();
+    let have: Vec<String> = version.fields.iter().map(ToString::to_string).collect();
+    if want.len() > have.len() {
+        return false;
+    }
+    want.iter().zip(have.iter()).all(|(w, h)| w == h)
 }
 
 #[cfg(test)]

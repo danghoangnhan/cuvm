@@ -135,6 +135,20 @@ pub enum Command {
         #[arg(long)]
         cudnn: bool,
     },
+    /// Download and install a CUDA toolkit version.
+    Install {
+        /// Version spec: exact (`12.4.1`), minor (`12.4`), major (`12`), or `latest`.
+        spec: String,
+        /// Pair a specific cuDNN version (M2: parsed but a no-op; pairing lands in M3).
+        #[arg(long)]
+        cudnn: Option<String>,
+        /// Skip cuDNN pairing (M2: parsed but a no-op; pairing lands in M3).
+        #[arg(long, conflicts_with = "cudnn")]
+        no_cudnn: bool,
+        /// Install even if the toolkit exceeds the driver ceiling.
+        #[arg(long)]
+        force: bool,
+    },
     /// Print the currently active bundle handle.
     Current,
     /// Print the absolute toolkit root for a spec.
@@ -206,6 +220,26 @@ impl Command {
             Command::LsRemote { cudnn: _ } => {
                 let registry = build_registry();
                 install::run_ls_remote(registry.as_ref())?;
+                Ok(0)
+            }
+            Command::Install {
+                spec,
+                cudnn: _,
+                no_cudnn: _,
+                force,
+            } => {
+                let registry = build_registry();
+                let installer = build_pipeline_installer(&deps.home);
+                install::run_install(
+                    registry.as_ref(),
+                    installer.as_ref(),
+                    deps.inventory.as_ref(),
+                    deps.compat.as_ref(),
+                    deps.driver.as_ref(),
+                    &deps.home.join("versions"),
+                    &spec,
+                    force,
+                )?;
                 Ok(0)
             }
             Command::Current => {
@@ -285,6 +319,34 @@ fn build_registry() -> Box<dyn cuvm_app::RegistryClient> {
     Box::new(cuvm_registry::DefaultRegistryClient::with_base_url(
         crate::composition::registry_base_url(),
     ))
+}
+
+/// Build the download-backed installer for the install pipeline. The cache lives
+/// under `$CUVM_HOME/cache`; the composition root is the only place that names the
+/// concrete unix/windows installer. Each installer constructs its own `Downloader`
+/// from the cache dir inside `acquire`.
+fn build_pipeline_installer(home: &std::path::Path) -> Box<dyn cuvm_app::Installer> {
+    let cache = crate::composition::cache_dir(home);
+    #[cfg(unix)]
+    {
+        use cuvm_core::{Arch, Os, Platform};
+        let platform = Platform {
+            os: Os::Linux,
+            arch: Arch::X86_64,
+        };
+        Box::new(cuvm_platform::unix::UnixInstaller::with_cache_dir(
+            cache, platform,
+        ))
+    }
+    #[cfg(not(unix))]
+    {
+        let dest_base = home.join("versions");
+        Box::new(cuvm_platform::windows::WindowsInstaller::with_paths(
+            cache,
+            dest_base,
+            vec![],
+        ))
+    }
 }
 
 /// `ls` implementation using `Deps` (marks default alias with `*`).
