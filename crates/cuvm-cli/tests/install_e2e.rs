@@ -117,7 +117,7 @@ fn serve_redist_124(server: &MockServer, fixtures: &Path) {
       "relative_path": "{cudart_rel}",
       "sha256": "{cudart_sha}",
       "md5": "00000000000000000000000000000000",
-      "size": {size}
+      "size": "{size}"
     }}
   }}
 }}"#,

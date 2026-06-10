@@ -51,6 +51,24 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+/// NVIDIA redist manifests serialize `size` as a JSON string in production
+/// (`"size": "1099680"`); accept both string and number.
+fn de_size<'de, D>(de: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum SizeRepr {
+        Num(u64),
+        Text(String),
+    }
+    match SizeRepr::deserialize(de)? {
+        SizeRepr::Num(n) => Ok(n),
+        SizeRepr::Text(s) => s.trim().parse().map_err(serde::de::Error::custom),
+    }
+}
+
 /// One redist platform object — mirrors a single `{relative_path, sha256, md5?, size}`
 /// entry under a component. `md5` is optional (some components omit it).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -63,6 +81,7 @@ pub struct RedistArtifact {
     #[serde(default)]
     pub md5: Option<String>,
     /// Compressed artifact size in bytes.
+    #[serde(deserialize_with = "de_size")]
     pub size: u64,
 }
 
@@ -497,6 +516,28 @@ mod manifest_tests {
         versions.sort();
         versions.dedup();
         assert_eq!(versions.len(), 1, "13.3 and 13.3.0 must collapse to one");
+    }
+
+    #[test]
+    fn parse_accepts_string_sizes_like_the_production_redist() {
+        // Real NVIDIA manifests serialize size as a JSON string
+        // ("size": "1099680"); only our fixtures used numbers.
+        let json = r#"{
+            "release_date": "2024-03-01",
+            "cuda_cudart": {
+                "name": "CUDA Runtime",
+                "version": "12.4.131",
+                "linux-x86_64": {
+                    "relative_path": "cuda_cudart/linux-x86_64/a.tar.xz",
+                    "sha256": "ab",
+                    "md5": "cd",
+                    "size": "1099680"
+                }
+            }
+        }"#;
+        let m = RedistManifest::parse(json).expect("string sizes must parse");
+        let art = m.component("cuda_cudart").unwrap().platforms["linux-x86_64"].clone();
+        assert_eq!(art.size, 1_099_680);
     }
 }
 
