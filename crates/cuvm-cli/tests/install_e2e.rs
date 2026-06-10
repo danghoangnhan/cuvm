@@ -5,6 +5,7 @@ use assert_cmd::Command;
 use assert_fs::prelude::*;
 use assert_fs::TempDir;
 use httpmock::prelude::*;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use std::path::Path;
 
@@ -98,9 +99,14 @@ fn serve_redist_124(server: &MockServer, fixtures: &Path) {
     let cudart_rel =
         "cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.4.131-archive.tar.xz".to_string();
 
-    let index_html =
-        r#"<html><body><a href="redistrib_12.4.1.json">redistrib_12.4.1.json</a></body></html>"#
-            .to_string();
+    // The index lists both 12.4.1 (the installable fixture below) and 12.6.0
+    // (no manifest/tarball served — present only so it scrapes as an *available*
+    // download for the unified-`ls` view).
+    let index_html = r#"<html><body>
+        <a href="redistrib_12.4.1.json">redistrib_12.4.1.json</a>
+        <a href="redistrib_12.6.0.json">redistrib_12.6.0.json</a>
+        </body></html>"#
+        .to_string();
     let redistrib = format!(
         r#"{{
   "release_date": "2024-03-01",
@@ -150,7 +156,7 @@ fn install_downloads_extracts_places_and_records_manifest() {
         .args(["install", "12.4", "--no-cudnn"])
         .assert()
         .success()
-        .stdout(contains("installed 12.4.1"));
+        .stdout(contains("+ cuda 12.4.1")); // fresh install => the `+` marker
 
     // toolkit landed in versions/<handle> with the component files present.
     home.child("versions/12.4.1/bin/nvcc")
@@ -212,7 +218,7 @@ fn compat_gate_refuses_without_force_and_proceeds_with_force() {
         .args(["install", "12.4", "--force"])
         .assert()
         .success()
-        .stdout(contains("installed 12.4.1"));
+        .stdout(contains("+ cuda 12.4.1")); // fresh install => the `+` marker
     home.child("versions/12.4.1/bin/nvcc")
         .assert(predicates::path::exists());
 }
@@ -305,4 +311,181 @@ fn install_cudnn_flag_parses_without_error_in_m2() {
         .assert()
         .failure() // network failure, NOT a clap parse error
         .stderr(contains("cuvm:"));
+}
+
+#[test]
+fn install_help_documents_reinstall_flag() {
+    cuvm()
+        .args(["install", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--reinstall"));
+}
+
+#[cfg(unix)]
+#[test]
+fn install_is_idempotent_and_reinstall_forces() {
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    let server = MockServer::start();
+    serve_redist_124(&server, fixtures.path());
+
+    let run = || {
+        let mut c = cuvm();
+        c.env("CUVM_HOME", home.path())
+            .env(
+                "CUVM_REGISTRY_URL",
+                format!("{}/redist/", server.base_url()),
+            )
+            .env("CUVM_SKIP_SMOKE", "1");
+        c
+    };
+
+    // First install: the fresh `+` change line on stdout (not the `~` reinstall).
+    run()
+        .args(["install", "12.4", "--no-cudnn"])
+        .assert()
+        .success()
+        .stdout(contains("+ cuda 12.4.1"));
+
+    // Second install: no-op, message on stderr, no new change line on stdout.
+    run()
+        .args(["install", "12.4", "--no-cudnn"])
+        .assert()
+        .success()
+        .stderr(contains("12.4.1 is already installed"))
+        .stdout(contains("cuda 12.4.1").not());
+
+    // --reinstall: re-runs, emitting the `~` change line.
+    run()
+        .args(["install", "12.4", "--no-cudnn", "--reinstall"])
+        .assert()
+        .success()
+        .stdout(contains("~ cuda 12.4.1"));
+}
+
+#[cfg(unix)]
+#[test]
+fn multi_install_continues_past_failure_and_exits_nonzero() {
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    let server = MockServer::start();
+    serve_redist_124(&server, fixtures.path());
+
+    // The failing spec comes FIRST: a success *after* an earlier failure is what
+    // proves the loop continues instead of aborting on the first error.
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .env(
+            "CUVM_REGISTRY_URL",
+            format!("{}/redist/", server.base_url()),
+        )
+        .env("CUVM_SKIP_SMOKE", "1")
+        .args(["install", "99.9", "12.4", "--no-cudnn"])
+        .assert()
+        .code(1) // partial failure is exactly exit 1 (a panic's 101 must not pass)
+        .stdout(contains("+ cuda 12.4.1")) // the good target still installed
+        .stderr(contains("error installing 99.9"));
+
+    // The good target really landed.
+    home.child("versions/12.4.1/bin/nvcc")
+        .assert(predicates::path::exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn unified_ls_shows_installed_and_available() {
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    let server = MockServer::start();
+    serve_redist_124(&server, fixtures.path());
+    // Add a 12.6.0 manifest to the index so it shows as an available download.
+    server.mock(|when, then| {
+        when.method(GET).path("/redist/redistrib_12.6.0.json");
+        then.status(200).body(r#"{"release_date":"2024-08-01"}"#);
+    });
+
+    let envs = |c: &mut Command| {
+        c.env("CUVM_HOME", home.path())
+            .env(
+                "CUVM_REGISTRY_URL",
+                format!("{}/redist/", server.base_url()),
+            )
+            .env("CUVM_SKIP_SMOKE", "1");
+    };
+
+    // Install warms the redist-index cache (§6.2) + lands 12.4.1, so a plain
+    // `ls` (no --refresh) already sees both index entries — no cold-cache hint.
+    let mut c = cuvm();
+    envs(&mut c);
+    c.args(["install", "12.4", "--no-cudnn"]).assert().success();
+
+    // Unified ls (no --refresh): 12.4.1 installed (path), 12.6.0 available.
+    let mut c = cuvm();
+    envs(&mut c);
+    c.arg("ls")
+        .assert()
+        .success()
+        .stdout(contains("12.4.1").and(contains("versions/12.4.1")))
+        .stdout(contains("12.6.0").and(contains("<download available>")));
+
+    // --only-installed hides the available row.
+    let mut c = cuvm();
+    envs(&mut c);
+    c.args(["ls", "--only-installed"])
+        .assert()
+        .success()
+        .stdout(contains("12.4.1"))
+        .stdout(contains("<download available>").not());
+
+    // JSON output parses and marks installed vs available.
+    let mut c = cuvm();
+    envs(&mut c);
+    let out = c.args(["ls", "--output-format", "json"]).assert().success();
+    let json: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let arr = json.as_array().unwrap();
+    let installed_124 = arr.iter().find(|e| e["version"] == "12.4.1").unwrap();
+    assert_eq!(installed_124["installed"], true, "{json}");
+    // §5.5: the installed row carries the recorded source/path/components and a
+    // non-null `installed_at`; `url` is reserved for available rows.
+    assert_eq!(
+        installed_124["components"],
+        serde_json::json!(["cuda_cudart"]),
+        "installed 12.4.1 must list exactly the fixture's components: {json}"
+    );
+    assert_eq!(installed_124["source"], "downloaded", "{json}");
+    assert!(
+        installed_124["path"].is_string(),
+        "installed 12.4.1 must have a non-null string path: {json}"
+    );
+    assert!(
+        installed_124["url"].is_null(),
+        "installed 12.4.1 must have url: null: {json}"
+    );
+    assert!(
+        !installed_124["installed_at"].is_null(),
+        "installed 12.4.1 must have a non-null installed_at: {json}"
+    );
+    let avail_126 = arr.iter().find(|e| e["version"] == "12.6.0").unwrap();
+    assert_eq!(avail_126["installed"], false, "{json}");
+    // §5.5: available-not-installed rows point at the redist manifest and carry
+    // no local state (`path`/`installed_at`/`source` all null).
+    assert!(
+        avail_126["url"]
+            .as_str()
+            .is_some_and(|u| u.ends_with("redistrib_12.6.0.json")),
+        "available 12.6.0 must have a url ending in redistrib_12.6.0.json: {json}"
+    );
+    assert!(
+        avail_126["path"].is_null(),
+        "available 12.6.0 must have path: null: {json}"
+    );
+    assert!(
+        avail_126["source"].is_null(),
+        "available 12.6.0 must have source: null: {json}"
+    );
+    assert!(
+        avail_126["installed_at"].is_null(),
+        "available 12.6.0 must have installed_at: null: {json}"
+    );
 }

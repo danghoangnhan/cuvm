@@ -12,24 +12,30 @@ use cuvm_app::{
 };
 use cuvm_core::manifest::BundleRecord;
 use cuvm_core::{current_platform, Driver, GpuClass, Os, Source, Version, VersionMeta};
+use cuvm_store::{redist_cache, Layout};
 
-/// `cuvm ls-remote`: print available toolkit versions, newest first.
-///
-/// # Errors
-/// Returns an error if the registry index cannot be fetched or parsed.
-pub fn run_ls_remote(registry: &dyn RegistryClient) -> Result<()> {
-    let platform = current_platform();
-    let mut versions = registry.list_toolkits(&platform)?;
-    versions.sort();
-    versions.reverse();
-    if versions.is_empty() {
-        println!("(no remote toolkits found)");
-        return Ok(());
-    }
-    for v in &versions {
-        println!("{v}");
-    }
-    Ok(())
+/// Result of installing a single spec; drives the per-target change line and the
+/// aggregate summary (§5.1/§5.4 of the spec).
+#[derive(Debug)]
+pub(crate) enum InstallOutcome {
+    /// Freshly installed (no prior bundle for this handle).
+    Installed {
+        handle: String,
+        path: std::path::PathBuf,
+    },
+    /// Re-installed over an existing bundle (`--reinstall`).
+    Reinstalled {
+        handle: String,
+        path: std::path::PathBuf,
+    },
+    /// Already present and `--reinstall` not passed: a no-op.
+    AlreadyPresent { handle: String },
+    /// Windows-only: the download path degraded to read-only adopt (spec §2.2).
+    #[cfg(not(unix))]
+    Adopted {
+        handle: String,
+        path: std::path::PathBuf,
+    },
 }
 
 /// Result of the driver-ceiling compat gate. Per §11/§2.4 the gate is advisory:
@@ -89,14 +95,13 @@ pub fn compat_gate(
     }
 }
 
-/// `cuvm install <ver> [--force]`: resolve newest patch, compat-gate, acquire,
-/// verify, extract, place, smoke-test, then record a `Downloaded` manifest bundle.
-///
-/// `cudnn`/`no_cudnn` are accepted but ignored in M2 (cuDNN pairing is M3).
+/// `cuvm install <spec>...`: install each spec, continuing past per-target
+/// failures, then print an aggregate summary. Returns the process exit code
+/// (`0` = all installed or no-op; `1` = at least one target failed).
 ///
 /// # Errors
-/// Returns an error if resolution, the compat gate (without `--force`), download,
-/// verification, extraction, placement, the smoke test, or manifest I/O fails.
+/// Returns an error only for an unrecoverable failure before the per-target loop
+/// (none today — per-target errors are caught and summarized).
 #[allow(clippy::too_many_arguments)]
 pub fn run_install(
     registry: &dyn RegistryClient,
@@ -104,21 +109,128 @@ pub fn run_install(
     inventory: &dyn Inventory,
     engine: &dyn CompatEngine,
     driver_probe: &dyn DriverProbe,
-    version_dir: &Path,
-    spec: &str,
+    home: &Path,
+    specs: &[String],
+    reinstall: bool,
     force: bool,
-) -> Result<()> {
+) -> Result<i32> {
+    let started = std::time::Instant::now();
+    let mut changed: Vec<String> = Vec::new();
+    let mut failed = 0usize;
+
+    for spec in specs {
+        match install_one(
+            registry,
+            installer,
+            inventory,
+            engine,
+            driver_probe,
+            home,
+            spec,
+            reinstall,
+            force,
+        ) {
+            Ok(InstallOutcome::Installed { handle, path }) => {
+                println!("+ cuda {handle}  ->  {}", path.display());
+                changed.push(handle);
+            }
+            Ok(InstallOutcome::Reinstalled { handle, path }) => {
+                println!("~ cuda {handle}  ->  {}", path.display());
+                changed.push(handle);
+            }
+            #[cfg(not(unix))]
+            Ok(InstallOutcome::Adopted { handle, path }) => {
+                println!("+ cuda {handle} (adopted)  ->  {}", path.display());
+                changed.push(handle);
+            }
+            Ok(InstallOutcome::AlreadyPresent { handle }) => {
+                eprintln!("cuvm: {handle} is already installed");
+            }
+            Err(e) => {
+                eprintln!("cuvm: error installing {spec}: {e:#}");
+                failed += 1;
+            }
+        }
+    }
+
+    let elapsed = started.elapsed().as_secs_f64();
+    match changed.len() {
+        0 => {
+            if failed == 0 && specs.len() > 1 {
+                eprintln!("cuvm: all requested versions already installed");
+            }
+        }
+        // Spec §5.4: the aggregate summary goes to stderr, dimmed (plain when
+        // stderr is not a TTY); the idempotency notices above stay undimmed.
+        1 => eprintln!(
+            "{}",
+            crate::reporter::dim(&format!("Installed CUDA {} in {elapsed:.1}s", changed[0]))
+        ),
+        n => eprintln!(
+            "{}",
+            crate::reporter::dim(&format!("Installed {n} toolkits in {elapsed:.1}s"))
+        ),
+    }
+    Ok(i32::from(failed > 0))
+}
+
+/// Install a single resolved spec: resolve newest patch, short-circuit if already
+/// installed (unless `reinstall`), compat-gate, acquire, verify, extract, place,
+/// smoke-test, then record a `Downloaded` manifest bundle. Returns the
+/// [`InstallOutcome`] (`AlreadyPresent` / `Installed` / `Reinstalled`, or
+/// `Adopted` on the Windows degrade path) for the caller to render; it prints
+/// nothing itself.
+///
+/// # Errors
+/// Returns an error if resolution, the compat gate (without `--force`), download,
+/// verification, extraction, placement, the smoke test, or manifest I/O fails.
+#[allow(clippy::too_many_arguments)]
+fn install_one(
+    registry: &dyn RegistryClient,
+    installer: &dyn Installer,
+    inventory: &dyn Inventory,
+    engine: &dyn CompatEngine,
+    driver_probe: &dyn DriverProbe,
+    home: &Path,
+    spec: &str,
+    reinstall: bool,
+    force: bool,
+) -> Result<InstallOutcome> {
     let platform = current_platform();
+    let version_dir = home.join("versions");
 
     // 1. Resolve newest patch matching `spec` from the registry.
     let mut available = registry.list_toolkits(&platform)?;
     available.sort();
+
+    // Warm the redist-index cache after a successful live fetch (§6.2): a later
+    // `cuvm ls` then renders the available rows offline. Best-effort — a
+    // cache-write failure must never fail the install.
+    let layout = Layout::new(home);
+    let _ = redist_cache::write(
+        &layout,
+        &platform,
+        &available,
+        time::OffsetDateTime::now_utc(),
+    );
+
     let want = available
         .iter()
         .rev()
         .find(|v| version_matches(spec, v))
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("no remote toolkit matches `{spec}`"))?;
+
+    // Idempotency: a bundle already exists for this handle (any source).
+    let existed = {
+        let manifest = inventory.load()?;
+        manifest.bundles.iter().any(|b| b.version == want.raw)
+    };
+    if existed && !reinstall {
+        return Ok(InstallOutcome::AlreadyPresent {
+            handle: want.raw.clone(),
+        });
+    }
 
     // 2. Driver-ceiling compat gate (warn + --force; never hard-block).
     let driver = driver_probe.probe()?;
@@ -205,8 +317,11 @@ pub fn run_install(
     manifest.bundles.push(record);
     inventory.save(&manifest)?;
 
-    println!("installed {handle}");
-    Ok(())
+    if existed {
+        Ok(InstallOutcome::Reinstalled { handle, path: dst })
+    } else {
+        Ok(InstallOutcome::Installed { handle, path: dst })
+    }
 }
 
 /// `cuvm uninstall <ver>`: for `Downloaded`/`Supplied` rows, delete the
@@ -253,12 +368,12 @@ fn degrade_to_adopt(
     inventory: &dyn Inventory,
     handle: &str,
     reason: &str,
-) -> Result<()> {
+) -> Result<InstallOutcome> {
     eprintln!("cuvm: warning: {reason}; falling back to adopt-only.");
     let candidates = installer.scan()?;
     let candidate = candidates
         .into_iter()
-        .find(|c| c.version.raw == handle)
+        .find(|c| adopt_candidate_matches(handle, &c.version))
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "cannot download {handle} and no matching in-place toolkit found to adopt"
@@ -278,12 +393,33 @@ fn degrade_to_adopt(
     manifest.bundles.retain(|b| b.version != record.version);
     manifest.bundles.push(record);
     inventory.save(&manifest)?;
-    println!(
-        "adopted {} ({})",
-        bundle.toolkit.version.raw,
-        bundle.toolkit.root.display()
-    );
-    Ok(())
+    Ok(InstallOutcome::Adopted {
+        handle: bundle.toolkit.version.raw.clone(),
+        path: bundle.toolkit.root,
+    })
+}
+
+/// Whether a scanned adopt `candidate` satisfies the registry-resolved `handle`
+/// (always full `X.Y.Z`). Windows scan candidates come from `v<major>.<minor>`
+/// dirs, so they usually carry only two fields; a candidate matches when **all
+/// of its fields** equal the handle's leading fields (`12.4` matches `12.4.1`;
+/// `12.4.0` does not — its third field disagrees; `12.4.1` matches itself).
+///
+/// Compiled (and unit-tested) on every platform so the matching rule stays
+/// test-locked on the Linux lane; the only caller is the `cfg(not(unix))`
+/// degrade-to-adopt path.
+#[cfg_attr(unix, allow(dead_code))]
+fn adopt_candidate_matches(handle: &str, candidate: &Version) -> bool {
+    let Ok(want) = Version::parse(handle) else {
+        return false;
+    };
+    !candidate.fields.is_empty()
+        && candidate.fields.len() <= want.fields.len()
+        && candidate
+            .fields
+            .iter()
+            .zip(&want.fields)
+            .all(|(c, w)| c == w)
 }
 
 /// Whether `version` satisfies `spec` (exact `X.Y.Z`, minor `X.Y`, major `X`, or
@@ -298,6 +434,45 @@ fn version_matches(spec: &str, version: &Version) -> bool {
         return false;
     }
     want.iter().zip(have.iter()).all(|(w, h)| w == h)
+}
+
+#[cfg(test)]
+mod adopt_match_tests {
+    use super::adopt_candidate_matches;
+    use cuvm_core::Version;
+
+    fn v(s: &str) -> Version {
+        Version::parse(s).unwrap()
+    }
+
+    #[test]
+    fn two_field_windows_candidate_matches_the_resolved_patch_handle() {
+        // Windows scan candidates come from `v12.4` dirs; the registry handle is
+        // always `X.Y.Z` — major.minor must be enough to adopt.
+        assert!(adopt_candidate_matches("12.4.1", &v("12.4")));
+    }
+
+    #[test]
+    fn exact_three_field_candidate_still_matches() {
+        assert!(adopt_candidate_matches("12.4.1", &v("12.4.1")));
+    }
+
+    #[test]
+    fn different_minor_does_not_match() {
+        assert!(!adopt_candidate_matches("12.4.1", &v("12.6")));
+    }
+
+    #[test]
+    fn three_field_candidate_must_agree_on_every_field() {
+        // A fully-versioned scanned toolkit is matched exactly: 12.4.0 is a
+        // different patch than the wanted 12.4.1.
+        assert!(!adopt_candidate_matches("12.4.1", &v("12.4.0")));
+    }
+
+    #[test]
+    fn different_major_does_not_match() {
+        assert!(!adopt_candidate_matches("13.0.1", &v("12.4")));
+    }
 }
 
 #[cfg(test)]

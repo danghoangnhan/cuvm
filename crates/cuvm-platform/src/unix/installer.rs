@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use cuvm_app::{AcquirePlan, ArtifactKind, Cached, Installer};
 use cuvm_core::{Bundle, Candidate, Platform, VersionMeta};
-use cuvm_download::{extract_tar_xz, sha256_file, strip_wrapper_dir, Downloader};
+use cuvm_download::{extract_tar_xz, sha256_file, strip_wrapper_dir, Downloader, Reporter};
 
 use crate::not_impl;
 use crate::unix::adopt;
@@ -23,6 +23,20 @@ pub(crate) fn artifact_file_name(a: &cuvm_app::Artifact) -> String {
         .next()
         .unwrap_or(&a.relative_path)
         .to_string()
+}
+
+/// Spec §5.4 progress label `<component> <version>` (e.g. `cuda_cudart
+/// 12.4.131`). The per-component version is parsed from the redist archive name
+/// `<component>-<platform>-<version>-archive.<ext>`; an archive name that does
+/// not follow that shape falls back to the bare component name.
+fn progress_label(component: &str, file_name: &str) -> String {
+    let mut rev = file_name.rsplit('-');
+    if let (Some(archive), Some(version)) = (rev.next(), rev.next()) {
+        if archive.starts_with("archive") && version.starts_with(|c: char| c.is_ascii_digit()) {
+            return format!("{component} {version}");
+        }
+    }
+    component.to_string()
 }
 
 /// Recursively copy every entry from `src` into `dst`, creating directories as
@@ -77,6 +91,8 @@ pub struct UnixInstaller {
     pub(crate) cache_dir: PathBuf,
     /// Host platform recorded on adopted candidates.
     pub(crate) platform: Platform,
+    /// Progress sink (defaults to silent; the CLI injects an indicatif reporter).
+    pub(crate) reporter: Reporter,
 }
 
 impl UnixInstaller {
@@ -87,6 +103,7 @@ impl UnixInstaller {
             scan_root: PathBuf::from("/usr/local"),
             cache_dir: std::env::temp_dir().join("cuvm-cache"),
             platform,
+            reporter: cuvm_download::silent(),
         }
     }
 
@@ -97,6 +114,7 @@ impl UnixInstaller {
             scan_root,
             cache_dir: std::env::temp_dir().join("cuvm-cache"),
             platform,
+            reporter: cuvm_download::silent(),
         }
     }
 
@@ -110,7 +128,15 @@ impl UnixInstaller {
             scan_root: PathBuf::from("/usr/local"),
             cache_dir,
             platform,
+            reporter: cuvm_download::silent(),
         }
+    }
+
+    /// Inject a progress reporter (the composition root supplies an indicatif one).
+    #[must_use]
+    pub fn with_reporter(mut self, reporter: Reporter) -> Self {
+        self.reporter = reporter;
+        self
     }
 }
 
@@ -118,12 +144,13 @@ impl Installer for UnixInstaller {
     fn acquire(&self, plan: &AcquirePlan) -> Result<Vec<Cached>> {
         std::fs::create_dir_all(&self.cache_dir)
             .with_context(|| format!("creating download cache dir {}", self.cache_dir.display()))?;
-        let downloader = Downloader::new(self.cache_dir.clone());
+        let downloader = Downloader::with_reporter(self.cache_dir.clone(), self.reporter.clone());
         let mut out = Vec::with_capacity(plan.artifacts.len());
         for artifact in &plan.artifacts {
             let file_name = artifact_file_name(artifact);
+            let label = progress_label(&artifact.component, &file_name);
             let path = downloader
-                .fetch(&artifact.url, &artifact.sha256, &file_name)
+                .fetch_labeled(&artifact.url, &artifact.sha256, &file_name, &label)
                 .with_context(|| {
                     format!(
                         "acquiring component {} from {}",
@@ -139,6 +166,7 @@ impl Installer for UnixInstaller {
     }
 
     fn verify(&self, arts: &[Cached]) -> Result<()> {
+        self.reporter.on_phase("Verifying");
         for cached in arts {
             let got = sha256_file(&cached.path)
                 .with_context(|| format!("hashing cached artifact {}", cached.path.display()))?;
@@ -155,6 +183,7 @@ impl Installer for UnixInstaller {
         Ok(())
     }
     fn extract_atomic(&self, arts: &[Cached], tmp: &Path) -> Result<PathBuf> {
+        self.reporter.on_phase("Extracting");
         // Start from a clean tmp prefix so a re-run never merges stale files.
         if tmp.exists() {
             std::fs::remove_dir_all(tmp)
@@ -302,7 +331,7 @@ mod wiring_tests {
 
 #[cfg(test)]
 mod acquire_verify_tests {
-    use super::{artifact_file_name, UnixInstaller};
+    use super::{artifact_file_name, progress_label, UnixInstaller};
     use cuvm_app::{Artifact, Cached, Installer};
     use cuvm_core::{Arch, Os, Platform};
     use std::io::Write;
@@ -327,6 +356,28 @@ mod acquire_verify_tests {
         assert_eq!(
             artifact_file_name(&a),
             "cuda_cudart-linux-x86_64-12.4.131-archive.tar.xz"
+        );
+    }
+
+    #[test]
+    fn progress_label_is_component_space_version_per_spec() {
+        // Spec §5.4: the bar/line is labelled "cuda_cudart 12.4.131", not the
+        // cache file name.
+        assert_eq!(
+            progress_label(
+                "cuda_cudart",
+                "cuda_cudart-linux-x86_64-12.4.131-archive.tar.xz"
+            ),
+            "cuda_cudart 12.4.131"
+        );
+    }
+
+    #[test]
+    fn progress_label_falls_back_to_component_for_odd_archive_names() {
+        assert_eq!(progress_label("cuda_cudart", "weird.tar.xz"), "cuda_cudart");
+        assert_eq!(
+            progress_label("cuda_cudart", "no-version-archive.tar.xz"),
+            "cuda_cudart"
         );
     }
 
