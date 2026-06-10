@@ -169,7 +169,7 @@ pub enum Command {
         /// Version spec(s): exact (`12.4.1`), minor (`12.4`), major (`12`), or `latest`.
         #[arg(required = true, num_args = 1..)]
         specs: Vec<String>,
-        /// Reinstall even if the version is already installed (re-download + replace).
+        /// Reinstall even if the version is already installed (replaces the existing install; verified cached downloads are reused).
         #[arg(long, short = 'r')]
         reinstall: bool,
         /// Pair a specific cuDNN version (M2: parsed but a no-op; pairing lands in M3).
@@ -409,9 +409,11 @@ fn build_pipeline_installer(home: &std::path::Path) -> Box<dyn cuvm_app::Install
     }
     #[cfg(not(unix))]
     {
+        // Default scan roots (Program Files + CUDA_PATH*) so the degrade-to-adopt
+        // fallback (spec §2.2) can actually find in-place toolkits.
         let dest_base = home.join("versions");
         Box::new(
-            cuvm_platform::windows::WindowsInstaller::with_paths(cache, dest_base, vec![])
+            cuvm_platform::windows::WindowsInstaller::with_default_roots(cache, dest_base)
                 .with_reporter(crate::reporter::CliReporter::shared()),
         )
     }

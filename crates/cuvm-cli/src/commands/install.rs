@@ -160,8 +160,16 @@ pub fn run_install(
                 eprintln!("cuvm: all requested versions already installed");
             }
         }
-        1 => eprintln!("Installed CUDA {} in {elapsed:.1}s", changed[0]),
-        n => eprintln!("Installed {n} toolkits in {elapsed:.1}s"),
+        // Spec §5.4: the aggregate summary goes to stderr, dimmed (plain when
+        // stderr is not a TTY); the idempotency notices above stay undimmed.
+        1 => eprintln!(
+            "{}",
+            crate::reporter::dim(&format!("Installed CUDA {} in {elapsed:.1}s", changed[0]))
+        ),
+        n => eprintln!(
+            "{}",
+            crate::reporter::dim(&format!("Installed {n} toolkits in {elapsed:.1}s"))
+        ),
     }
     Ok(i32::from(failed > 0))
 }
@@ -365,7 +373,7 @@ fn degrade_to_adopt(
     let candidates = installer.scan()?;
     let candidate = candidates
         .into_iter()
-        .find(|c| c.version.raw == handle)
+        .find(|c| adopt_candidate_matches(handle, &c.version))
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "cannot download {handle} and no matching in-place toolkit found to adopt"
@@ -391,6 +399,29 @@ fn degrade_to_adopt(
     })
 }
 
+/// Whether a scanned adopt `candidate` satisfies the registry-resolved `handle`
+/// (always full `X.Y.Z`). Windows scan candidates come from `v<major>.<minor>`
+/// dirs, so they usually carry only two fields; a candidate matches when **all
+/// of its fields** equal the handle's leading fields (`12.4` matches `12.4.1`;
+/// `12.4.0` does not — its third field disagrees; `12.4.1` matches itself).
+///
+/// Compiled (and unit-tested) on every platform so the matching rule stays
+/// test-locked on the Linux lane; the only caller is the `cfg(not(unix))`
+/// degrade-to-adopt path.
+#[cfg_attr(unix, allow(dead_code))]
+fn adopt_candidate_matches(handle: &str, candidate: &Version) -> bool {
+    let Ok(want) = Version::parse(handle) else {
+        return false;
+    };
+    !candidate.fields.is_empty()
+        && candidate.fields.len() <= want.fields.len()
+        && candidate
+            .fields
+            .iter()
+            .zip(&want.fields)
+            .all(|(c, w)| c == w)
+}
+
 /// Whether `version` satisfies `spec` (exact `X.Y.Z`, minor `X.Y`, major `X`, or
 /// `latest`). The caller iterates newest-first, so the first match is the newest.
 fn version_matches(spec: &str, version: &Version) -> bool {
@@ -403,6 +434,45 @@ fn version_matches(spec: &str, version: &Version) -> bool {
         return false;
     }
     want.iter().zip(have.iter()).all(|(w, h)| w == h)
+}
+
+#[cfg(test)]
+mod adopt_match_tests {
+    use super::adopt_candidate_matches;
+    use cuvm_core::Version;
+
+    fn v(s: &str) -> Version {
+        Version::parse(s).unwrap()
+    }
+
+    #[test]
+    fn two_field_windows_candidate_matches_the_resolved_patch_handle() {
+        // Windows scan candidates come from `v12.4` dirs; the registry handle is
+        // always `X.Y.Z` — major.minor must be enough to adopt.
+        assert!(adopt_candidate_matches("12.4.1", &v("12.4")));
+    }
+
+    #[test]
+    fn exact_three_field_candidate_still_matches() {
+        assert!(adopt_candidate_matches("12.4.1", &v("12.4.1")));
+    }
+
+    #[test]
+    fn different_minor_does_not_match() {
+        assert!(!adopt_candidate_matches("12.4.1", &v("12.6")));
+    }
+
+    #[test]
+    fn three_field_candidate_must_agree_on_every_field() {
+        // A fully-versioned scanned toolkit is matched exactly: 12.4.0 is a
+        // different patch than the wanted 12.4.1.
+        assert!(!adopt_candidate_matches("12.4.1", &v("12.4.0")));
+    }
+
+    #[test]
+    fn different_major_does_not_match() {
+        assert!(!adopt_candidate_matches("13.0.1", &v("12.4")));
+    }
 }
 
 #[cfg(test)]
