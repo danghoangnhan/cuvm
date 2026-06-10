@@ -7,6 +7,7 @@ use cuvm_core::CudnnRecord;
 
 use crate::atomic::write_atomic;
 use crate::error::Result;
+use crate::layout::Layout;
 
 /// `versions/<ver>/.cuvm-cudnn.json` for a placed toolkit root.
 #[must_use]
@@ -33,6 +34,55 @@ pub fn read_cudnn_meta(toolkit_root: &Path) -> Option<CudnnRecord> {
 pub fn write_cudnn_meta(toolkit_root: &Path, rec: &CudnnRecord) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(rec).expect("CudnnRecord serializes");
     write_atomic(&cudnn_meta_path(toolkit_root), &bytes)
+}
+
+/// `$CUVM_HOME/cudnn/<sha256>` — one immutable payload per content hash.
+#[must_use]
+pub fn store_path(layout: &Layout, sha256: &str) -> PathBuf {
+    layout.cudnn_dir().join(sha256)
+}
+
+/// Atomically publish a staged, wrapper-stripped cuDNN tree into the
+/// content-addressed store. Idempotent: an existing payload for the same hash
+/// wins and the duplicate staging dir is removed (content-addressed ⇒ same
+/// bytes). Same never-partial posture as toolkit `place`: rename within the
+/// same filesystem (staging dirs live under `cudnn/`).
+///
+/// # Errors
+/// [`crate::StoreError::Io`] on filesystem failures.
+pub fn place_staged(layout: &Layout, sha256: &str, staged: &Path) -> Result<PathBuf> {
+    use crate::error::StoreError;
+    let io = |path: &Path| {
+        let path = path.to_path_buf();
+        move |source: std::io::Error| StoreError::Io { path, source }
+    };
+
+    let dst = store_path(layout, sha256);
+    if dst.is_dir() {
+        std::fs::remove_dir_all(staged).map_err(io(staged))?;
+        return Ok(dst);
+    }
+    std::fs::create_dir_all(layout.cudnn_dir()).map_err(io(&layout.cudnn_dir()))?;
+    std::fs::rename(staged, &dst).map_err(io(&dst))?;
+    Ok(dst)
+}
+
+/// File names of the cuDNN payload's linkable artifacts (`lib/` + `bin/`
+/// entries whose name contains `cudnn`), sorted — recorded as `Cudnn.libs`
+/// ("full `libcudnn*` set", spec §2.3).
+#[must_use]
+pub fn lib_names(store: &Path) -> Vec<String> {
+    let mut names: Vec<String> = ["lib", "bin"]
+        .iter()
+        .filter_map(|sub| std::fs::read_dir(store.join(sub)).ok())
+        .flatten()
+        .filter_map(std::result::Result::ok)
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.contains("cudnn"))
+        .collect();
+    names.sort();
+    names.dedup();
+    names
 }
 
 #[cfg(test)]
@@ -64,5 +114,61 @@ mod tests {
         assert_eq!(read_cudnn_meta(dir.path()), None);
         std::fs::write(cudnn_meta_path(dir.path()), b"{not json").unwrap();
         assert_eq!(read_cudnn_meta(dir.path()), None);
+    }
+
+    fn staged_tree(root: &Path, names: &[&str]) -> PathBuf {
+        let staged = root.join(".stage-test");
+        for n in names {
+            let p = staged.join(n);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"x").unwrap();
+        }
+        staged
+    }
+
+    #[test]
+    fn place_staged_moves_the_tree_under_its_sha() {
+        let home = tempfile::tempdir().unwrap();
+        let layout = Layout::new(home.path());
+        let staged = staged_tree(home.path(), &["lib/libcudnn.so", "include/cudnn.h"]);
+        let dst = place_staged(&layout, "feedbeef", &staged).unwrap();
+        assert_eq!(dst, store_path(&layout, "feedbeef"));
+        assert!(dst.join("lib/libcudnn.so").is_file());
+        assert!(!staged.exists(), "staging dir is consumed");
+    }
+
+    #[test]
+    fn place_staged_is_idempotent_for_an_existing_payload() {
+        let home = tempfile::tempdir().unwrap();
+        let layout = Layout::new(home.path());
+        let first = staged_tree(home.path(), &["lib/libcudnn.so"]);
+        let dst = place_staged(&layout, "feedbeef", &first).unwrap();
+        std::fs::write(dst.join("marker"), b"original").unwrap();
+        // Second placement of the same content hash: keep the existing payload.
+        let second = staged_tree(home.path(), &["lib/libcudnn.so"]);
+        let again = place_staged(&layout, "feedbeef", &second).unwrap();
+        assert_eq!(again, dst);
+        assert!(dst.join("marker").is_file(), "existing payload untouched");
+        assert!(!second.exists(), "duplicate staging cleaned up");
+    }
+
+    #[test]
+    fn lib_names_collects_cudnn_entries_sorted() {
+        let home = tempfile::tempdir().unwrap();
+        let store = home.path().join("s");
+        for f in [
+            "lib/libcudnn_ops.so",
+            "lib/libcudnn.so",
+            "lib/README",
+            "bin/cudnn64_9.dll",
+        ] {
+            let p = store.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"x").unwrap();
+        }
+        assert_eq!(
+            lib_names(&store),
+            ["cudnn64_9.dll", "libcudnn.so", "libcudnn_ops.so"]
+        );
     }
 }

@@ -74,6 +74,9 @@ pub struct VersionMeta {
 /// record backing `Bundle.cudnn`. The manifest's `BundleRecord.cudnn` keeps
 /// only the version string (D6: no manifest schema bump); the store path is
 /// derived at hydration time as `<cudnn_dir>/<sha256>`.
+///
+/// Evolve additively with `#[serde(default)]`; a parse failure silently drops
+/// the record at hydration (D6 posture).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CudnnRecord {
     pub version: String,
@@ -186,5 +189,9 @@ mod tests {
         let json = serde_json::to_string(&rec).unwrap();
         let back: CudnnRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back, rec);
+        // Wire-format pin: the sidecar shape is load-bearing (D6) — same
+        // posture as `manifest_json_uses_expected_field_names` above.
+        assert!(json.contains("\"cuda_major\":12") && json.contains("\"source\":\"downloaded\""));
+        assert!(json.contains("\"installed_at\":\"2026-06-10T10:30:00Z\""));
     }
 }
