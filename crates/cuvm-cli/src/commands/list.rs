@@ -151,6 +151,7 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
 pub fn run_list_cudnn_remote(registry: &dyn RegistryClient) -> Result<()> {
     let platform = current_platform();
     let mut versions = registry
+        // 0 = no CUDA-major filter — the cuDNN index is platform/major-agnostic (D4).
         .list_cudnn(&platform, 0)
         .context("fetching the cuDNN redist index")?;
     versions.sort();

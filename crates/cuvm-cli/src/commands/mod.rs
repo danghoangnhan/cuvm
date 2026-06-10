@@ -159,6 +159,8 @@ pub enum Command {
         output_format: OutputFormat,
     },
     /// List toolkit versions available in the remote registry (alias for `ls --only-downloads`).
+    ///
+    /// With `--cudnn`, lists cuDNN redist versions instead.
     LsRemote {
         /// List cuDNN versions from the cuDNN redist instead of toolkits.
         #[arg(long)]

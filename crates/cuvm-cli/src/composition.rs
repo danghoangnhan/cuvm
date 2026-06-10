@@ -112,8 +112,9 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    /// Serializes the tests that mutate the process-global `CUVM_REGISTRY_URL`,
-    /// so they cannot race each other under cargo's parallel test threads.
+    /// Serializes the tests that mutate the process-global registry env vars
+    /// (`CUVM_REGISTRY_URL`, `CUVM_CUDNN_REGISTRY_URL`), so they cannot race
+    /// each other under cargo's parallel test threads.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
@@ -147,7 +148,10 @@ mod tests {
         let got = cudnn_registry_base_url();
         std::env::remove_var("CUVM_CUDNN_REGISTRY_URL");
         assert_eq!(got, "http://127.0.0.1:9/cudnn/");
-        assert!(cudnn_registry_base_url().starts_with("https://developer.download.nvidia.com/"));
+        assert_eq!(
+            cudnn_registry_base_url(),
+            "https://developer.download.nvidia.com/compute/cudnn/redist/"
+        );
     }
 
     #[test]

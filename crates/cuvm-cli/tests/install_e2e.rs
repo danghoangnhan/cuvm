@@ -406,7 +406,8 @@ fn ls_remote_cudnn_lists_cudnn_versions_newest_first() {
         );
     });
 
-    let assert = cuvm()
+    // Exact output: newest-first, one version per line, nothing else.
+    cuvm()
         .env("CUVM_HOME", home.path())
         .env(
             "CUVM_CUDNN_REGISTRY_URL",
@@ -415,13 +416,7 @@ fn ls_remote_cudnn_lists_cudnn_versions_newest_first() {
         .args(["ls-remote", "--cudnn"])
         .assert()
         .success()
-        .stdout(contains("9.8.0").and(contains("8.9.7")));
-
-    // Newest-first: 9.8.0 must be printed before 8.9.7.
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let newer = stdout.find("9.8.0").unwrap();
-    let older = stdout.find("8.9.7").unwrap();
-    assert!(newer < older, "expected newest-first output:\n{stdout}");
+        .stdout(predicates::ord::eq("9.8.0\n8.9.7\n"));
 }
 
 #[cfg(unix)]
