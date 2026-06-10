@@ -2,6 +2,7 @@
 
 pub mod adopt;
 pub mod alias;
+pub mod cudnn;
 pub mod current;
 pub mod default;
 pub mod doctor;
