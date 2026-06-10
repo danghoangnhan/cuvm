@@ -160,7 +160,7 @@ pub enum Command {
     },
     /// List toolkit versions available in the remote registry (alias for `ls --only-downloads`).
     LsRemote {
-        /// List cuDNN versions instead (M2: parsed but a no-op; listing lands in M3).
+        /// List cuDNN versions from the cuDNN redist instead of toolkits.
         #[arg(long)]
         cudnn: bool,
     },
@@ -272,21 +272,25 @@ impl Command {
                 )?;
                 Ok(0)
             }
-            Command::LsRemote { cudnn: _ } => {
+            Command::LsRemote { cudnn } => {
                 let registry = build_registry();
-                list::run_list(
-                    deps,
-                    registry.as_ref(),
-                    &list::ListOpts {
-                        spec: None,
-                        only_installed: false,
-                        only_downloads: true,
-                        all_versions: false,
-                        show_urls: false,
-                        refresh: false,
-                        json: false,
-                    },
-                )?;
+                if cudnn {
+                    list::run_list_cudnn_remote(registry.as_ref())?;
+                } else {
+                    list::run_list(
+                        deps,
+                        registry.as_ref(),
+                        &list::ListOpts {
+                            spec: None,
+                            only_installed: false,
+                            only_downloads: true,
+                            all_versions: false,
+                            show_urls: false,
+                            refresh: false,
+                            json: false,
+                        },
+                    )?;
+                }
                 Ok(0)
             }
             Command::Install {

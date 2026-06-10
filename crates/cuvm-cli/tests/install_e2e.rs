@@ -392,6 +392,38 @@ fn multi_install_continues_past_failure_and_exits_nonzero() {
         .assert(predicates::path::exists());
 }
 
+#[test]
+fn ls_remote_cudnn_lists_cudnn_versions_newest_first() {
+    let home = TempDir::new().unwrap();
+    let server = MockServer::start();
+    let _index = server.mock(|when, then| {
+        when.method(GET).path("/cudnn/");
+        then.status(200).body(
+            r#"<html><body>
+            <a href="redistrib_8.9.7.json">redistrib_8.9.7.json</a>
+            <a href="redistrib_9.8.0.json">redistrib_9.8.0.json</a>
+            </body></html>"#,
+        );
+    });
+
+    let assert = cuvm()
+        .env("CUVM_HOME", home.path())
+        .env(
+            "CUVM_CUDNN_REGISTRY_URL",
+            format!("{}/cudnn/", server.base_url()),
+        )
+        .args(["ls-remote", "--cudnn"])
+        .assert()
+        .success()
+        .stdout(contains("9.8.0").and(contains("8.9.7")));
+
+    // Newest-first: 9.8.0 must be printed before 8.9.7.
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let newer = stdout.find("9.8.0").unwrap();
+    let older = stdout.find("8.9.7").unwrap();
+    assert!(newer < older, "expected newest-first output:\n{stdout}");
+}
+
 #[cfg(unix)]
 #[test]
 fn unified_ls_shows_installed_and_available() {

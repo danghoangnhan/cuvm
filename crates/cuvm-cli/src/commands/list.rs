@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use cuvm_app::RegistryClient;
 use cuvm_core::{current_platform, Version};
 use cuvm_store::{redist_cache, Layout};
@@ -139,6 +139,23 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
                 )
             );
         }
+    }
+    Ok(())
+}
+
+/// `ls-remote --cudnn`: newest-first cuDNN versions from the cuDNN redist
+/// index. Live fetch only — no cache (D9): the flag is explicit network intent.
+///
+/// # Errors
+/// Returns an error if the cuDNN redist index cannot be fetched.
+pub fn run_list_cudnn_remote(registry: &dyn RegistryClient) -> Result<()> {
+    let platform = current_platform();
+    let mut versions = registry
+        .list_cudnn(&platform, 0)
+        .context("fetching the cuDNN redist index")?;
+    versions.sort();
+    for v in versions.iter().rev() {
+        println!("{}", v.raw);
     }
     Ok(())
 }
