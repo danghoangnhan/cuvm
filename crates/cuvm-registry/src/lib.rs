@@ -407,6 +407,25 @@ impl DefaultRegistryClient {
         let bytes = cuvm_download::http_get(url).map_err(|e| RegistryError::Http(e.to_string()))?;
         String::from_utf8(bytes).map_err(|e| RegistryError::Http(e.to_string()))
     }
+
+    /// Scrape `redistrib_<ver>.json` links at `index_url` into sorted, deduped
+    /// versions. Shared body of `list_toolkits`/`list_cudnn` — the two
+    /// products differ only in which index URL they scrape.
+    fn list_versions_at(index_url: &str) -> RegistryResult<Vec<Version>> {
+        let html = Self::get_text(index_url)?;
+        let mut versions: Vec<Version> = scrape_redistrib_versions(&html)
+            .into_iter()
+            .filter_map(|s| Version::parse(&s).ok())
+            .collect();
+        if versions.is_empty() {
+            return Err(RegistryError::EmptyIndex {
+                url: index_url.to_string(),
+            });
+        }
+        versions.sort();
+        versions.dedup();
+        Ok(versions)
+    }
 }
 
 /// Extract every distinct `X.Y.Z` from `redistrib_<X.Y.Z>.json` substrings in `html`.
@@ -441,18 +460,7 @@ fn scrape_redistrib_versions(html: &str) -> Vec<String> {
 impl cuvm_app::RegistryClient for DefaultRegistryClient {
     fn list_toolkits(&self, _p: &Platform) -> anyhow::Result<Vec<Version>> {
         // NVIDIA serves the redist directory listing at the base URL itself.
-        let index_url = self.base_url.clone();
-        let html = Self::get_text(&index_url)?;
-        let mut versions: Vec<Version> = scrape_redistrib_versions(&html)
-            .into_iter()
-            .filter_map(|s| Version::parse(&s).ok())
-            .collect();
-        if versions.is_empty() {
-            return Err(RegistryError::EmptyIndex { url: index_url }.into());
-        }
-        versions.sort();
-        versions.dedup();
-        Ok(versions)
+        Self::list_versions_at(&self.base_url).map_err(Into::into)
     }
 
     /// Versions named by the cuDNN redist index, ascending. Like
@@ -460,20 +468,7 @@ impl cuvm_app::RegistryClient for DefaultRegistryClient {
     /// `_p`/`_major` are accepted for the port shape but not used as filters —
     /// platform/variant gaps surface at `resolve_cudnn` (D4).
     fn list_cudnn(&self, _p: &Platform, _major: u32) -> anyhow::Result<Vec<Version>> {
-        let html = Self::get_text(&self.cudnn_base_url)?;
-        let mut versions: Vec<Version> = scrape_redistrib_versions(&html)
-            .into_iter()
-            .filter_map(|s| Version::parse(&s).ok())
-            .collect();
-        if versions.is_empty() {
-            return Err(RegistryError::EmptyIndex {
-                url: self.cudnn_base_url.clone(),
-            }
-            .into());
-        }
-        versions.sort();
-        versions.dedup();
-        Ok(versions)
+        Self::list_versions_at(&self.cudnn_base_url).map_err(Into::into)
     }
 
     fn resolve_toolkit(
