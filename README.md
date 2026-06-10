@@ -5,9 +5,11 @@
 per-shell, with no root and zero runtime dependencies. Linux / WSL **and**
 Windows.
 
-> **Status — Milestone 1.** This release ships *adopt / switch / pin / doctor*
-> with **no downloading**: it manages CUDA toolkits already on your machine.
-> Installing toolkits from NVIDIA's redistributables lands in M2.
+> **Status — Milestone 2.** `cuvm` downloads and installs CUDA toolkits from
+> NVIDIA's per-component redistributables on Linux/WSL and Windows (when a
+> download is blocked on Windows, `install` falls back to adopting an
+> existing toolkit in place), on top of the M1 *adopt / switch / pin / doctor*
+> feature set. cuDNN pairing lands in M3.
 
 ## Install
 
@@ -47,15 +49,24 @@ from a directory's `.cuda-version` pin.
 ## Usage
 
 ```sh
+cuvm install 12.4 12.6            # download & install one or more toolkits
+cuvm install -r 12.4              # reinstall even if present (replace the existing install)
 cuvm adopt /usr/local/cuda-12.4   # register an existing toolkit in place
 cuvm adopt --scan                 # discover & adopt /usr/local/cuda-* installs
-cuvm ls                           # list managed toolkits (default marked *)
+cuvm ls                           # installed toolkits + `<download available>`
+cuvm ls --output-format json      # the same list, machine-readable
+cuvm ls-remote                    # downloadable versions (alias: ls --only-downloads)
 cuvm use 12.4                     # activate in the current shell
 cuvm default 12.6                 # set the persistent default
 cuvm pin 12.4                     # write .cuda-version in the current dir
 cuvm which 12.4                   # print a toolkit's absolute root
 cuvm doctor                       # diagnose driver/toolkit/PATH health
+cuvm uninstall 12.4.1             # remove a toolkit (exact handle, see cuvm ls)
 ```
+
+`install` is idempotent — re-running it on an installed version is a no-op
+unless you pass `--reinstall`/`-r`. Installing a version newer than your
+driver's ceiling is refused unless you pass `--force`.
 
 `adopt` never moves or deletes your existing installs — it registers them in
 place (`~/.cuvm`) and `uninstall` only de-registers adopted toolkits.
