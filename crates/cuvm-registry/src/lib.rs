@@ -333,12 +333,16 @@ use cuvm_core::{Platform, Version};
 /// The production CUDA redist base URL (trailing slash required).
 const DEFAULT_BASE_URL: &str = "https://developer.download.nvidia.com/compute/cuda/redist/";
 
+/// NVIDIA's account-free cuDNN redistributables index (spec §2.3).
+const DEFAULT_CUDNN_BASE_URL: &str = "https://developer.download.nvidia.com/compute/cudnn/redist/";
+
 /// Default `cuvm_app::RegistryClient`: scrapes the redist index and resolves
 /// `redistrib_<ver>.json` manifests into `Artifact`s. All HTTP goes through
 /// `cuvm_download::http_get`.
 #[derive(Debug, Clone)]
 pub struct DefaultRegistryClient {
     base_url: String,
+    cudnn_base_url: String,
 }
 
 impl Default for DefaultRegistryClient {
@@ -347,25 +351,55 @@ impl Default for DefaultRegistryClient {
     }
 }
 
+/// Enforce the trailing `/` every base URL needs: artifact URLs are formed as
+/// `base + relative_path`.
+fn with_trailing_slash(url: String) -> String {
+    if url.ends_with('/') {
+        url
+    } else {
+        format!("{url}/")
+    }
+}
+
 impl DefaultRegistryClient {
-    /// Build a client pointed at the production redist base URL.
+    /// Production NVIDIA endpoints for both products.
     #[must_use]
     pub fn new() -> Self {
         Self {
             base_url: DEFAULT_BASE_URL.to_string(),
+            cudnn_base_url: DEFAULT_CUDNN_BASE_URL.to_string(),
         }
     }
 
-    /// Build a client pointed at a custom base URL (a trailing `/` is enforced).
-    /// Tests point this at an `httpmock` server.
+    /// Override the CUDA toolkit base only (cuDNN keeps the production
+    /// default). Trailing slash enforced: artifact URLs are `base + relative_path`.
     #[must_use]
     pub fn with_base_url(url: String) -> Self {
-        let base_url = if url.ends_with('/') {
-            url
-        } else {
-            format!("{url}/")
-        };
-        Self { base_url }
+        Self {
+            base_url: with_trailing_slash(url),
+            ..Self::new()
+        }
+    }
+
+    /// Override both product bases (tests point each at a mock).
+    #[must_use]
+    pub fn with_base_urls(cuda: String, cudnn: String) -> Self {
+        Self {
+            base_url: with_trailing_slash(cuda),
+            cudnn_base_url: with_trailing_slash(cudnn),
+        }
+    }
+
+    /// The CUDA toolkit redist base URL (always trailing-slash terminated).
+    #[must_use]
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// The cuDNN redist base URL (always trailing-slash terminated).
+    #[must_use]
+    pub fn cudnn_base_url(&self) -> &str {
+        &self.cudnn_base_url
     }
 
     /// Fetch a URL as UTF-8 text via `cuvm_download::http_get`.
@@ -528,6 +562,22 @@ mod tests {
         };
         assert!(err.to_string().contains("no redistrib_<ver>.json links"));
         assert!(err.to_string().contains("https://example.invalid/redist/"));
+    }
+
+    #[test]
+    fn base_urls_are_normalized_with_trailing_slashes() {
+        let c = DefaultRegistryClient::with_base_urls(
+            "http://cuda.example/redist".into(),
+            "http://cudnn.example/redist".into(),
+        );
+        assert_eq!(c.base_url(), "http://cuda.example/redist/");
+        assert_eq!(c.cudnn_base_url(), "http://cudnn.example/redist/");
+        // with_base_url keeps the production cuDNN default.
+        let d = DefaultRegistryClient::with_base_url("http://cuda.example/".into());
+        assert_eq!(
+            d.cudnn_base_url(),
+            "https://developer.download.nvidia.com/compute/cudnn/redist/"
+        );
     }
 }
 

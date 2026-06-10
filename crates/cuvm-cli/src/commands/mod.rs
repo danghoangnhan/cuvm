@@ -380,12 +380,13 @@ fn build_installer() -> Box<dyn cuvm_app::Installer> {
     cuvm_platform::new_installer(cuvm_core::Os::Linux)
 }
 
-/// Build the registry client, honouring `CUVM_REGISTRY_URL` (tests/CI) over the
-/// NVIDIA default. The composition root is the only place that knows the concrete
-/// `DefaultRegistryClient`.
+/// Build the registry client, honouring `CUVM_REGISTRY_URL` and
+/// `CUVM_CUDNN_REGISTRY_URL` (tests/CI) over the NVIDIA defaults. The composition
+/// root is the only place that knows the concrete `DefaultRegistryClient`.
 fn build_registry() -> Box<dyn cuvm_app::RegistryClient> {
-    Box::new(cuvm_registry::DefaultRegistryClient::with_base_url(
+    Box::new(cuvm_registry::DefaultRegistryClient::with_base_urls(
         crate::composition::registry_base_url(),
+        crate::composition::cudnn_registry_base_url(),
     ))
 }
 

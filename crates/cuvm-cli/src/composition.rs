@@ -62,6 +62,16 @@ pub fn registry_base_url() -> String {
     })
 }
 
+/// cuDNN redist base URL: `CUVM_CUDNN_REGISTRY_URL` env override (tests) or
+/// NVIDIA's production cuDNN redist. Trailing slash required for the same
+/// reason as [`registry_base_url`].
+#[must_use]
+pub fn cudnn_registry_base_url() -> String {
+    std::env::var("CUVM_CUDNN_REGISTRY_URL").unwrap_or_else(|_| {
+        "https://developer.download.nvidia.com/compute/cudnn/redist/".to_string()
+    })
+}
+
 /// The download cache directory: `$CUVM_HOME/cache`.
 #[must_use]
 pub fn cache_dir(home: &std::path::Path) -> PathBuf {
@@ -126,6 +136,18 @@ mod tests {
         std::env::set_var("CUVM_REGISTRY_URL", "http://127.0.0.1:9/redist/");
         assert_eq!(registry_base_url(), "http://127.0.0.1:9/redist/");
         std::env::remove_var("CUVM_REGISTRY_URL");
+    }
+
+    #[test]
+    fn cudnn_registry_base_url_honours_the_env_override() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::env::set_var("CUVM_CUDNN_REGISTRY_URL", "http://127.0.0.1:9/cudnn/");
+        let got = cudnn_registry_base_url();
+        std::env::remove_var("CUVM_CUDNN_REGISTRY_URL");
+        assert_eq!(got, "http://127.0.0.1:9/cudnn/");
+        assert!(cudnn_registry_base_url().starts_with("https://developer.download.nvidia.com/"));
     }
 
     #[test]
