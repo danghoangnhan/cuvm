@@ -4,13 +4,21 @@
 use std::sync::Arc;
 
 /// Receives progress callbacks during `Downloader::fetch` and installer phases.
+///
+/// Every `on_download_start` is terminated by exactly one of
+/// `on_download_finish` (success) or `on_download_abort` (any failure), so an
+/// interactive implementation can always tear its UI down cleanly.
 pub trait ProgressReporter: Send + Sync {
-    /// A download for `label` is starting; `total_bytes` is the content length if known.
+    /// A download for `label` is starting; `total_bytes` is the expected final
+    /// file size if known.
     fn on_download_start(&self, label: &str, total_bytes: Option<u64>);
-    /// `delta_bytes` more bytes of `label` have been written.
+    /// `delta_bytes` more bytes of `label` are accounted for.
     fn on_download_advance(&self, label: &str, delta_bytes: u64);
     /// The download for `label` finished (verified + renamed).
     fn on_download_finish(&self, label: &str);
+    /// The download for `label` failed after `on_download_start`; tear down any
+    /// in-flight progress UI (spec §6.4: no dangling bar). Default no-op.
+    fn on_download_abort(&self, _label: &str) {}
     /// A non-download phase began (e.g. "Verifying", "Extracting").
     fn on_phase(&self, phase: &str);
 }
@@ -26,6 +34,7 @@ impl ProgressReporter for SilentReporter {
     fn on_download_start(&self, _: &str, _: Option<u64>) {}
     fn on_download_advance(&self, _: &str, _: u64) {}
     fn on_download_finish(&self, _: &str) {}
+    fn on_download_abort(&self, _: &str) {}
     fn on_phase(&self, _: &str) {}
 }
 
@@ -60,6 +69,9 @@ pub(crate) mod recording {
         }
         fn on_download_finish(&self, label: &str) {
             self.events.lock().unwrap().push(format!("finish:{label}"));
+        }
+        fn on_download_abort(&self, label: &str) {
+            self.events.lock().unwrap().push(format!("abort:{label}"));
         }
         fn on_phase(&self, phase: &str) {
             self.events.lock().unwrap().push(format!("phase:{phase}"));
