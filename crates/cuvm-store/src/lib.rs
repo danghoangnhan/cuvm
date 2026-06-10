@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod atomic;
+pub mod cudnn_store;
 pub mod error;
 pub mod inventory;
 pub mod layout;
