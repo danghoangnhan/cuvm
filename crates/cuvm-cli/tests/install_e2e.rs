@@ -156,7 +156,7 @@ fn install_downloads_extracts_places_and_records_manifest() {
         .args(["install", "12.4", "--no-cudnn"])
         .assert()
         .success()
-        .stdout(contains("cuda 12.4.1"));
+        .stdout(contains("+ cuda 12.4.1")); // fresh install => the `+` marker
 
     // toolkit landed in versions/<handle> with the component files present.
     home.child("versions/12.4.1/bin/nvcc")
@@ -218,7 +218,7 @@ fn compat_gate_refuses_without_force_and_proceeds_with_force() {
         .args(["install", "12.4", "--force"])
         .assert()
         .success()
-        .stdout(contains("cuda 12.4.1"));
+        .stdout(contains("+ cuda 12.4.1")); // fresh install => the `+` marker
     home.child("versions/12.4.1/bin/nvcc")
         .assert(predicates::path::exists());
 }
@@ -341,12 +341,12 @@ fn install_is_idempotent_and_reinstall_forces() {
         c
     };
 
-    // First install: a change line on stdout.
+    // First install: the fresh `+` change line on stdout (not the `~` reinstall).
     run()
         .args(["install", "12.4", "--no-cudnn"])
         .assert()
         .success()
-        .stdout(contains("cuda 12.4.1"));
+        .stdout(contains("+ cuda 12.4.1"));
 
     // Second install: no-op, message on stderr, no new change line on stdout.
     run()
@@ -372,6 +372,8 @@ fn multi_install_continues_past_failure_and_exits_nonzero() {
     let server = MockServer::start();
     serve_redist_124(&server, fixtures.path());
 
+    // The failing spec comes FIRST: a success *after* an earlier failure is what
+    // proves the loop continues instead of aborting on the first error.
     cuvm()
         .env("CUVM_HOME", home.path())
         .env(
@@ -379,10 +381,10 @@ fn multi_install_continues_past_failure_and_exits_nonzero() {
             format!("{}/redist/", server.base_url()),
         )
         .env("CUVM_SKIP_SMOKE", "1")
-        .args(["install", "12.4", "99.9", "--no-cudnn"])
+        .args(["install", "99.9", "12.4", "--no-cudnn"])
         .assert()
-        .failure() // 99.9 has no match => exit 1
-        .stdout(contains("cuda 12.4.1")) // the good target still installed
+        .code(1) // partial failure is exactly exit 1 (a panic's 101 must not pass)
+        .stdout(contains("+ cuda 12.4.1")) // the good target still installed
         .stderr(contains("error installing 99.9"));
 
     // The good target really landed.
@@ -444,10 +446,21 @@ fn unified_ls_shows_installed_and_available() {
     let arr = json.as_array().unwrap();
     let installed_124 = arr.iter().find(|e| e["version"] == "12.4.1").unwrap();
     assert_eq!(installed_124["installed"], true, "{json}");
-    // §5.5: installed rows carry `components` (array) and a non-null `installed_at`.
+    // §5.5: the installed row carries the recorded source/path/components and a
+    // non-null `installed_at`; `url` is reserved for available rows.
+    assert_eq!(
+        installed_124["components"],
+        serde_json::json!(["cuda_cudart"]),
+        "installed 12.4.1 must list exactly the fixture's components: {json}"
+    );
+    assert_eq!(installed_124["source"], "downloaded", "{json}");
     assert!(
-        installed_124["components"].is_array(),
-        "installed 12.4.1 must have a components array: {json}"
+        installed_124["path"].is_string(),
+        "installed 12.4.1 must have a non-null string path: {json}"
+    );
+    assert!(
+        installed_124["url"].is_null(),
+        "installed 12.4.1 must have url: null: {json}"
     );
     assert!(
         !installed_124["installed_at"].is_null(),
@@ -455,7 +468,22 @@ fn unified_ls_shows_installed_and_available() {
     );
     let avail_126 = arr.iter().find(|e| e["version"] == "12.6.0").unwrap();
     assert_eq!(avail_126["installed"], false, "{json}");
-    // §5.5: available-not-installed rows have `installed_at: null`.
+    // §5.5: available-not-installed rows point at the redist manifest and carry
+    // no local state (`path`/`installed_at`/`source` all null).
+    assert!(
+        avail_126["url"]
+            .as_str()
+            .is_some_and(|u| u.ends_with("redistrib_12.6.0.json")),
+        "available 12.6.0 must have a url ending in redistrib_12.6.0.json: {json}"
+    );
+    assert!(
+        avail_126["path"].is_null(),
+        "available 12.6.0 must have path: null: {json}"
+    );
+    assert!(
+        avail_126["source"].is_null(),
+        "available 12.6.0 must have source: null: {json}"
+    );
     assert!(
         avail_126["installed_at"].is_null(),
         "available 12.6.0 must have installed_at: null: {json}"
