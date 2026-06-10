@@ -109,6 +109,16 @@ mod tests {
         }
     }
 
+    /// Rewrite the cache file in place after applying `mutate` to the parsed JSON,
+    /// so a test can corrupt exactly one field of an otherwise-valid document.
+    fn patch_doc(layout: &Layout, mutate: impl FnOnce(&mut serde_json::Value)) {
+        let path = cache_path(layout);
+        let mut doc: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        mutate(&mut doc);
+        std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+    }
+
     #[test]
     fn round_trips_within_ttl() {
         let tmp = assert_fs::TempDir::new().unwrap();
@@ -158,5 +168,49 @@ mod tests {
         let layout = Layout::new(tmp.path());
         let now = OffsetDateTime::UNIX_EPOCH;
         assert!(read(&layout, &plat(), now, 86_400).is_none());
+    }
+
+    #[test]
+    fn truncated_json_reads_as_none() {
+        let tmp = assert_fs::TempDir::new().unwrap();
+        let layout = Layout::new(tmp.path());
+        let now = OffsetDateTime::UNIX_EPOCH + Duration::days(1);
+        write(&layout, &plat(), &[Version::parse("12.4.1").unwrap()], now).unwrap();
+        let path = cache_path(&layout);
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::write(&path, &bytes[..bytes.len() / 2]).unwrap();
+        assert!(read(&layout, &plat(), now, 86_400).is_none());
+    }
+
+    #[test]
+    fn schema_mismatch_reads_as_none() {
+        let tmp = assert_fs::TempDir::new().unwrap();
+        let layout = Layout::new(tmp.path());
+        let now = OffsetDateTime::UNIX_EPOCH + Duration::days(1);
+        write(&layout, &plat(), &[Version::parse("12.4.1").unwrap()], now).unwrap();
+        assert!(read(&layout, &plat(), now, 86_400).is_some());
+        patch_doc(&layout, |doc| {
+            doc["schema_version"] = serde_json::json!(SCHEMA + 1);
+        });
+        assert!(read(&layout, &plat(), now, 86_400).is_none());
+    }
+
+    #[test]
+    fn unparseable_versions_are_filtered_not_fatal() {
+        let tmp = assert_fs::TempDir::new().unwrap();
+        let layout = Layout::new(tmp.path());
+        let now = OffsetDateTime::UNIX_EPOCH + Duration::days(1);
+        write(&layout, &plat(), &[Version::parse("12.6.0").unwrap()], now).unwrap();
+        patch_doc(&layout, |doc| {
+            doc["versions"] = serde_json::json!(["12.6.0", "not-a-version", "", "12.4.1"]);
+        });
+        let got = read(&layout, &plat(), now, 86_400).unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Version::parse("12.6.0").unwrap(),
+                Version::parse("12.4.1").unwrap(),
+            ]
+        );
     }
 }
