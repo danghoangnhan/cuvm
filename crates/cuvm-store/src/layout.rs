@@ -73,6 +73,12 @@ impl Layout {
         self.root.join("cudnn")
     }
 
+    /// Path to the recorded EULA acknowledgements (spec §6: `eula/`).
+    #[must_use]
+    pub fn eula_dir(&self) -> PathBuf {
+        self.root.join("eula")
+    }
+
     /// Resolve a manifest `path` field: absolute (adopted) returned as-is;
     /// relative (`versions/<ver>`) joined against the home root.
     #[must_use]
