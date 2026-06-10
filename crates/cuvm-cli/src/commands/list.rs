@@ -98,11 +98,8 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
             )
         };
         match available {
-            Some(mut vers) => {
-                if !opts.all_versions {
-                    vers = newest_per_minor(vers);
-                }
-                for v in vers {
+            Some(vers) => {
+                for v in filter_and_collapse(vers, opts.spec.as_deref(), opts.all_versions) {
                     rows.entry(v.raw.clone()).or_insert_with(|| Row {
                         handle: v.raw.clone(),
                         version: v.clone(),
@@ -135,10 +132,33 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
     } else {
         print_text(&list, opts.show_urls);
         if cold_cache && !opts.only_installed {
-            eprintln!("(run 'cuvm ls --only-downloads' to fetch available versions)");
+            eprintln!(
+                "{}",
+                crate::reporter::dim(
+                    "(run 'cuvm ls --only-downloads' to fetch available versions)"
+                )
+            );
         }
     }
     Ok(())
+}
+
+/// Apply the `spec` filter, then (unless `all_versions`) collapse to the
+/// newest patch per minor. Filtering FIRST keeps an exact-patch query for an
+/// older patch visible — collapsing first would drop it before it can match.
+fn filter_and_collapse(
+    mut versions: Vec<Version>,
+    spec: Option<&str>,
+    all_versions: bool,
+) -> Vec<Version> {
+    if let Some(spec) = spec {
+        versions.retain(|v| spec_matches(spec, v));
+    }
+    if all_versions {
+        versions
+    } else {
+        newest_per_minor(versions)
+    }
 }
 
 /// Keep only the newest patch per `major.minor` (available-row collapse).
@@ -165,7 +185,14 @@ fn spec_matches(spec: &str, version: &Version) -> bool {
 
 /// Redist manifest URL for an available version (no extra fetch).
 fn redist_url(version: &Version) -> String {
-    format!("{}redistrib_{}.json", registry_base_url(), version.raw)
+    redist_url_for(&registry_base_url(), version)
+}
+
+/// Pure core of [`redist_url`]: join `base` and the manifest filename,
+/// enforcing a trailing `/` on `base` the same way the registry client does.
+fn redist_url_for(base: &str, version: &Version) -> String {
+    let sep = if base.ends_with('/') { "" } else { "/" };
+    format!("{base}{sep}redistrib_{}.json", version.raw)
 }
 
 fn print_text(list: &[Row], show_urls: bool) {
@@ -173,19 +200,39 @@ fn print_text(list: &[Row], show_urls: bool) {
         println!("(no toolkits)");
         return;
     }
-    let width = list.iter().map(|r| r.handle.len()).max().unwrap_or(0);
-    for r in list {
-        let marker = if r.is_default { "*" } else { " " };
-        let col2 = if r.installed {
-            r.path.clone().unwrap_or_default()
-        } else if show_urls {
-            redist_url(&r.version)
-        } else {
-            "<download available>".to_string()
-        };
-        // `<handle> <marker>` keeps the default's "<handle> *" adjacency.
-        println!("{:<width$} {marker}  {col2}", r.handle, width = width);
+    for line in format_text_rows(list, show_urls) {
+        println!("{line}");
     }
+}
+
+/// Render the non-empty text rows, one string per row. The default's `*` is
+/// glued to its handle FIRST (`<handle> *`, spec §5.5), then the composed
+/// cell is padded so column 2 stays aligned across mixed-width handles.
+fn format_text_rows(list: &[Row], show_urls: bool) -> Vec<String> {
+    let cells: Vec<String> = list
+        .iter()
+        .map(|r| {
+            if r.is_default {
+                format!("{} *", r.handle)
+            } else {
+                r.handle.clone()
+            }
+        })
+        .collect();
+    let width = cells.iter().map(String::len).max().unwrap_or(0);
+    list.iter()
+        .zip(cells)
+        .map(|(r, cell)| {
+            let col2 = if r.installed {
+                r.path.clone().unwrap_or_default()
+            } else if show_urls {
+                redist_url(&r.version)
+            } else {
+                "<download available>".to_string()
+            };
+            format!("{cell:<width$}  {col2}")
+        })
+        .collect()
 }
 
 fn print_json(list: &[Row]) {
@@ -209,4 +256,89 @@ fn print_json(list: &[Row]) {
         "{}",
         serde_json::to_string_pretty(&serde_json::Value::Array(arr)).unwrap()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v(s: &str) -> Version {
+        Version::parse(s).expect("test version parses")
+    }
+
+    fn raws(versions: &[Version]) -> Vec<&str> {
+        versions.iter().map(|x| x.raw.as_str()).collect()
+    }
+
+    fn row(handle: &str, is_default: bool, installed: bool, path: Option<&str>) -> Row {
+        Row {
+            handle: handle.to_string(),
+            version: v(handle),
+            installed,
+            source: installed.then_some("downloaded"),
+            path: path.map(ToString::to_string),
+            components: Vec::new(),
+            installed_at: None,
+            is_default,
+        }
+    }
+
+    #[test]
+    fn exact_patch_spec_survives_the_newest_per_minor_collapse() {
+        // 12.4.0 is a real downloadable version; the collapse must not hide it
+        // from an exact-patch query (`cuvm install 12.4.0` would succeed).
+        let got = filter_and_collapse(vec![v("12.4.0"), v("12.4.1")], Some("12.4.0"), false);
+        assert_eq!(raws(&got), ["12.4.0"]);
+    }
+
+    #[test]
+    fn minor_spec_still_collapses_to_the_newest_patch() {
+        let got = filter_and_collapse(
+            vec![v("12.4.0"), v("12.4.1"), v("12.6.0")],
+            Some("12.4"),
+            false,
+        );
+        assert_eq!(raws(&got), ["12.4.1"]);
+    }
+
+    #[test]
+    fn all_versions_keeps_every_matching_patch() {
+        let got = filter_and_collapse(
+            vec![v("12.4.0"), v("12.4.1"), v("12.6.0")],
+            Some("12.4"),
+            true,
+        );
+        assert_eq!(raws(&got), ["12.4.0", "12.4.1"]);
+    }
+
+    #[test]
+    fn redist_url_for_normalizes_a_missing_trailing_slash() {
+        let ver = v("12.4.1");
+        assert_eq!(
+            redist_url_for("http://host/redist", &ver),
+            "http://host/redist/redistrib_12.4.1.json"
+        );
+        assert_eq!(
+            redist_url_for("http://host/redist/", &ver),
+            "http://host/redist/redistrib_12.4.1.json"
+        );
+    }
+
+    #[test]
+    fn default_marker_stays_glued_with_mixed_width_handles() {
+        // The default handle is SHORTER than the longest handle; the marker
+        // must stay glued (`12.4.1 *`), not drift to the padded column edge.
+        let list = vec![
+            row("12.10.0", false, false, None),
+            row("12.4.1", true, true, Some("/home/u/.cuvm/versions/12.4.1")),
+        ];
+        let lines = format_text_rows(&list, false);
+        assert_eq!(
+            lines,
+            [
+                "12.10.0   <download available>",
+                "12.4.1 *  /home/u/.cuvm/versions/12.4.1",
+            ]
+        );
+    }
 }
