@@ -455,9 +455,25 @@ impl cuvm_app::RegistryClient for DefaultRegistryClient {
         Ok(versions)
     }
 
+    /// Versions named by the cuDNN redist index, ascending. Like
+    /// `list_toolkits`, this is index-only: the index is platform-agnostic, so
+    /// `_p`/`_major` are accepted for the port shape but not used as filters —
+    /// platform/variant gaps surface at `resolve_cudnn` (D4).
     fn list_cudnn(&self, _p: &Platform, _major: u32) -> anyhow::Result<Vec<Version>> {
-        // cuDNN registry listing lands in M3; M2 install path does not call this.
-        anyhow::bail!("list_cudnn is not implemented in M2")
+        let html = Self::get_text(&self.cudnn_base_url)?;
+        let mut versions: Vec<Version> = scrape_redistrib_versions(&html)
+            .into_iter()
+            .filter_map(|s| Version::parse(&s).ok())
+            .collect();
+        if versions.is_empty() {
+            return Err(RegistryError::EmptyIndex {
+                url: self.cudnn_base_url.clone(),
+            }
+            .into());
+        }
+        versions.sort();
+        versions.dedup();
+        Ok(versions)
     }
 
     fn resolve_toolkit(
@@ -471,13 +487,24 @@ impl cuvm_app::RegistryClient for DefaultRegistryClient {
         self.resolve_toolkit_impl(v, *p, want).map_err(Into::into)
     }
 
+    /// The single `cudnn` artifact for this version/platform/CUDA-major.
     fn resolve_cudnn(
         &self,
-        _v: &Version,
-        _p: &Platform,
-        _major: u32,
+        v: &Version,
+        p: &Platform,
+        major: u32,
     ) -> anyhow::Result<Vec<cuvm_app::Artifact>> {
-        anyhow::bail!("resolve_cudnn is not implemented in M2")
+        let manifest_url = format!("{}redistrib_{}.json", self.cudnn_base_url, v.raw);
+        let manifest = CudnnManifest::parse(&Self::get_text(&manifest_url)?)?;
+        let art = manifest.artifact(&p.redist_key(), major)?;
+        Ok(vec![cuvm_app::Artifact {
+            component: "cudnn".to_string(),
+            relative_path: art.relative_path.clone(),
+            url: format!("{}{}", self.cudnn_base_url, art.relative_path),
+            sha256: art.sha256.clone(),
+            md5: art.md5.clone(),
+            size: art.size_bytes(),
+        }])
     }
 }
 

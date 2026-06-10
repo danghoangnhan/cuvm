@@ -197,3 +197,84 @@ fn resolve_toolkit_errors_when_platform_missing() {
         .unwrap_err();
     assert!(err.to_string().contains("windows-x86_64"));
 }
+
+const CUDNN_INDEX_HTML: &str = r#"<html><body>
+<a href="redistrib_8.9.7.json">redistrib_8.9.7.json</a>
+<a href="redistrib_9.8.0.json">redistrib_9.8.0.json</a>
+</body></html>"#;
+
+const CUDNN_980_BODY: &str = r#"{
+    "release_label": "9.8.0",
+    "cudnn": {
+        "name": "NVIDIA CUDA Deep Neural Network library",
+        "license_path": "cudnn/LICENSE.txt",
+        "version": "9.8.0.87",
+        "linux-x86_64": {
+            "cuda12": {
+                "relative_path": "cudnn/linux-x86_64/cudnn-linux-x86_64-9.8.0.87_cuda12-archive.tar.xz",
+                "sha256": "feed",
+                "md5": "beef",
+                "size": "1024"
+            }
+        }
+    }
+}"#;
+
+#[test]
+fn list_cudnn_scrapes_the_cudnn_index_sorted() {
+    let server = MockServer::start();
+    let cudnn_index = server.mock(|when, then| {
+        when.method(GET).path("/cudnn/");
+        then.status(200).body(CUDNN_INDEX_HTML);
+    });
+    let client = DefaultRegistryClient::with_base_urls(
+        format!("{}/redist/", server.base_url()),
+        format!("{}/cudnn/", server.base_url()),
+    );
+    let got = client.list_cudnn(&linux(), 12).expect("lists");
+    let raws: Vec<&str> = got.iter().map(|v| v.raw.as_str()).collect();
+    assert_eq!(raws, ["8.9.7", "9.8.0"]);
+    cudnn_index.assert();
+}
+
+#[test]
+fn resolve_cudnn_builds_the_artifact_from_the_cudnn_base() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/cudnn/redistrib_9.8.0.json");
+        then.status(200).body(CUDNN_980_BODY);
+    });
+    let client = DefaultRegistryClient::with_base_urls(
+        format!("{}/redist/", server.base_url()),
+        format!("{}/cudnn/", server.base_url()),
+    );
+    let v = Version::parse("9.8.0").unwrap();
+    let arts = client.resolve_cudnn(&v, &linux(), 12).expect("resolves");
+    assert_eq!(arts.len(), 1);
+    assert_eq!(arts[0].component, "cudnn");
+    assert_eq!(arts[0].sha256, "feed");
+    assert_eq!(arts[0].size, 1024);
+    assert_eq!(
+        arts[0].url,
+        format!(
+            "{}/cudnn/cudnn/linux-x86_64/cudnn-linux-x86_64-9.8.0.87_cuda12-archive.tar.xz",
+            server.base_url()
+        )
+    );
+}
+
+#[test]
+fn resolve_cudnn_missing_variant_is_a_clear_error() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/cudnn/redistrib_9.8.0.json");
+        then.status(200).body(CUDNN_980_BODY);
+    });
+    let client = DefaultRegistryClient::with_base_urls(
+        format!("{}/redist/", server.base_url()),
+        format!("{}/cudnn/", server.base_url()),
+    );
+    let v = Version::parse("9.8.0").unwrap();
+    let err = client.resolve_cudnn(&v, &linux(), 13).unwrap_err();
+    assert!(err.to_string().contains("cuda13"), "{err}");
+}
