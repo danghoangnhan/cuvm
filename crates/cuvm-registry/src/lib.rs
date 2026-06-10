@@ -61,22 +61,45 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+/// NVIDIA manifests have flipped `size` between JSON number and string across
+/// products and eras (see commit 0774819); both `de_size` and `de_size_opt`
+/// accept either representation via this untagged shape.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SizeRepr {
+    Num(u64),
+    Text(String),
+}
+
+impl SizeRepr {
+    /// Collapse to bytes; an unparseable string is a real error, never 0.
+    fn into_u64<E: serde::de::Error>(self) -> Result<u64, E> {
+        match self {
+            SizeRepr::Num(n) => Ok(n),
+            SizeRepr::Text(s) => s.trim().parse().map_err(serde::de::Error::custom),
+        }
+    }
+}
+
 /// NVIDIA redist manifests serialize `size` as a JSON string in production
 /// (`"size": "1099680"`); accept both string and number.
 fn de_size<'de, D>(de: D) -> Result<u64, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum SizeRepr {
-        Num(u64),
-        Text(String),
-    }
-    match SizeRepr::deserialize(de)? {
-        SizeRepr::Num(n) => Ok(n),
-        SizeRepr::Text(s) => s.trim().parse().map_err(serde::de::Error::custom),
-    }
+    SizeRepr::deserialize(de)?.into_u64()
+}
+
+/// Optional variant of [`de_size`]: absent/`null` stays `None`; present values
+/// accept both string and number. A present-but-unparseable string is a real
+/// error (matching `de_size`'s posture), not a silent `None`.
+fn de_size_opt<'de, D>(de: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<SizeRepr>::deserialize(de)?
+        .map(SizeRepr::into_u64)
+        .transpose()
 }
 
 /// One redist platform object — mirrors a single `{relative_path, sha256, md5?, size}`
@@ -158,8 +181,6 @@ impl RedistManifest {
 }
 
 /// One artifact under a cuDNN platform's `cuda<major>` variant key.
-/// `size` is kept as the raw string the manifest carries (see `de_size` note);
-/// cuDNN manifests always use strings.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct CudnnVariantArtifact {
     /// Path under the cuDNN redist base URL, copied verbatim.
@@ -169,20 +190,18 @@ pub struct CudnnVariantArtifact {
     /// Optional hex MD5 from the manifest.
     #[serde(default)]
     pub md5: Option<String>,
-    /// Compressed artifact size as the raw manifest string, if present.
-    #[serde(default)]
-    pub size: Option<String>,
+    /// Payload size in bytes; tolerant of the string/number representation
+    /// flip (same hazard class as `de_size` — see commit 0774819).
+    #[serde(default, deserialize_with = "de_size_opt")]
+    pub size: Option<u64>,
 }
 
 impl CudnnVariantArtifact {
-    /// Best-effort numeric size (0 when absent/unparseable — only progress
-    /// totals consume it, and those come from Content-Length anyway).
+    /// Size in bytes, 0 when the manifest omits it (only progress totals
+    /// consume it, and those come from Content-Length anyway).
     #[must_use]
     pub fn size_bytes(&self) -> u64 {
-        self.size
-            .as_deref()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0)
+        self.size.unwrap_or(0)
     }
 }
 
@@ -714,10 +733,82 @@ mod cudnn_manifest_tests {
     fn parse_extracts_the_cudnn_product_and_nested_variants() {
         let m = CudnnManifest::parse(CUDNN_9230).expect("parses");
         assert_eq!(m.product_version.as_deref(), Some("9.23.0.39"));
+        // Metadata keys (name/license/license_path/cuda_variant) must not be
+        // mistaken for platforms; only the two real platform maps survive.
+        assert_eq!(m.platforms.len(), 2);
         let art = m.artifact("linux-x86_64", 12).expect("cuda12 build exists");
         assert!(art.relative_path.ends_with("_cuda12-archive.tar.xz"));
         assert_eq!(art.sha256, "7d2c");
         assert_eq!(art.size_bytes(), 967_524_328);
+    }
+
+    /// Mirrors the 8.x-era shape (`redistrib_8.9.7.json`): 3-field release
+    /// label, ppc64le builds with `cuda11` variants, a `cudnn_samples`
+    /// sibling product, and both size hazards (numeric size, absent size).
+    const CUDNN_897: &str = r#"{
+        "release_date": "2023-12-05",
+        "release_label": "8.9.7",
+        "release_product": "cudnn",
+        "cudnn": {
+            "name": "NVIDIA CUDA Deep Neural Network library",
+            "license": "cudnn",
+            "version": "8.9.7.29",
+            "cuda_variant": ["11", "12"],
+            "linux-ppc64le": {
+                "cuda11": {
+                    "relative_path": "cudnn/linux-ppc64le/cudnn-linux-ppc64le-8.9.7.29_cuda11-archive.tar.xz",
+                    "sha256": "aa11",
+                    "size": 12345
+                },
+                "cuda12": {
+                    "relative_path": "cudnn/linux-ppc64le/cudnn-linux-ppc64le-8.9.7.29_cuda12-archive.tar.xz",
+                    "sha256": "bb22"
+                }
+            },
+            "linux-x86_64": {
+                "cuda11": {
+                    "relative_path": "cudnn/linux-x86_64/cudnn-linux-x86_64-8.9.7.29_cuda11-archive.tar.xz",
+                    "sha256": "cc33",
+                    "size": "843423789"
+                }
+            }
+        },
+        "cudnn_samples": {
+            "name": "NVIDIA cuDNN samples",
+            "license": "cudnn",
+            "version": "8.9.7.29",
+            "linux-x86_64": {
+                "cuda11": {
+                    "relative_path": "cudnn/linux-x86_64/cudnn_samples-linux-x86_64-8.9.7.29_cuda11-archive.tar.xz",
+                    "sha256": "dd44",
+                    "size": "1234"
+                }
+            }
+        }
+    }"#;
+
+    #[test]
+    fn eight_x_manifest_resolves_ppc64le_and_tolerates_numeric_or_absent_size() {
+        let m = CudnnManifest::parse(CUDNN_897).expect("8.x manifest parses");
+        assert_eq!(m.product_version.as_deref(), Some("8.9.7.29"));
+        assert_eq!(
+            m.platforms.len(),
+            2,
+            "`cudnn_samples` sibling product must not leak into platforms"
+        );
+        // A numeric `size` must not poison the whole platform (the
+        // filter_map in `parse` would surface it as MissingPlatform).
+        let art = m
+            .artifact("linux-ppc64le", 11)
+            .expect("cuda11 ppc64le build exists");
+        assert!(art.relative_path.ends_with("_cuda11-archive.tar.xz"));
+        assert_eq!(art.size, Some(12_345), "numeric size must parse");
+        assert_eq!(art.size_bytes(), 12_345);
+        let no_size = m
+            .artifact("linux-ppc64le", 12)
+            .expect("cuda12 build exists");
+        assert_eq!(no_size.size, None);
+        assert_eq!(no_size.size_bytes(), 0, "absent size defaults to 0");
     }
 
     #[test]
