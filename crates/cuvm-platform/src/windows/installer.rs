@@ -82,6 +82,16 @@ impl WindowsInstaller {
         }
     }
 
+    /// Production pipeline constructor: the **default** Windows scan roots
+    /// (Program Files + `CUDA_PATH*`) with an injected download cache and
+    /// destination base. The install pipeline wires this so degrade-to-adopt
+    /// (spec §2.2) can actually find in-place toolkits — `with_paths` with an
+    /// empty root list would scan nothing.
+    #[must_use]
+    pub fn with_default_roots(cache_dir: PathBuf, dest_base: PathBuf) -> Self {
+        Self::with_paths(cache_dir, dest_base, default_roots())
+    }
+
     /// Inject a progress reporter (the composition root supplies an indicatif one).
     #[must_use]
     pub fn with_reporter(mut self, reporter: Reporter) -> Self {
@@ -159,23 +169,45 @@ impl WindowsInstaller {
 /// Default scan roots per spec §2.2: Program Files install dir + `CUDA_PATH` +
 /// every `CUDA_PATH_VX_Y`. Reading real env is host-neutral (empty on Linux CI).
 fn default_roots() -> Vec<PathBuf> {
+    roots_from_env(std::env::vars())
+}
+
+/// Pure core of [`default_roots`] over explicit env pairs (deterministic under
+/// test on any host). The Program Files root sorts first; `CUDA_PATH*` points at
+/// a `vX.Y` dir, so its **parent** is scanned (the walk then re-finds the dir).
+fn roots_from_env(vars: impl IntoIterator<Item = (String, String)>) -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Ok(pf) = std::env::var("ProgramFiles") {
-        roots.push(
-            PathBuf::from(pf)
-                .join("NVIDIA GPU Computing Toolkit")
-                .join("CUDA"),
-        );
-    }
-    for (k, v) in std::env::vars() {
-        if k == "CUDA_PATH" || k.starts_with("CUDA_PATH_V") {
-            // CUDA_PATH points at a vX.Y dir; scan its parent so the walk finds it.
+    let mut cuda_parents = Vec::new();
+    for (k, v) in vars {
+        if k == "ProgramFiles" {
+            roots.push(
+                PathBuf::from(v)
+                    .join("NVIDIA GPU Computing Toolkit")
+                    .join("CUDA"),
+            );
+        } else if k == "CUDA_PATH" || k.starts_with("CUDA_PATH_V") {
             if let Some(parent) = PathBuf::from(&v).parent() {
-                roots.push(parent.to_path_buf());
+                cuda_parents.push(parent.to_path_buf());
             }
         }
     }
+    roots.append(&mut cuda_parents);
     roots
+}
+
+/// Spec §5.4 progress label `<component> <version>` (e.g. `cuda_cudart
+/// 12.4.131`). The per-component version is parsed from the redist archive name
+/// `<component>-windows-x86_64-<version>-archive.zip`; an archive name that
+/// does not follow that shape falls back to the bare component name.
+/// (Mirrors the unix installer's helper; the backends are cfg-independent.)
+fn progress_label(component: &str, file_name: &str) -> String {
+    let mut rev = file_name.rsplit('-');
+    if let (Some(archive), Some(version)) = (rev.next(), rev.next()) {
+        if archive.starts_with("archive") && version.starts_with(|c: char| c.is_ascii_digit()) {
+            return format!("{component} {version}");
+        }
+    }
+    component.to_string()
 }
 
 /// Parse `"v12.4"` → `Version("12.4")`; `None` for non-version dir names.
@@ -256,8 +288,9 @@ impl Installer for WindowsInstaller {
                 || art.component.clone(),
                 |n| n.to_string_lossy().into_owned(),
             );
+            let label = progress_label(&art.component, &file_name);
             let path = downloader
-                .fetch(&art.url, &art.sha256, &file_name)
+                .fetch_labeled(&art.url, &art.sha256, &file_name, &label)
                 .map_err(|e| anyhow::anyhow!("acquire {}: {e}", art.component))?;
             out.push(Cached {
                 artifact: art.clone(),
@@ -422,6 +455,21 @@ mod decide_tests {
             WindowsInstaller::decide_acquire(&plan),
             WindowsAcquireOutcome::Assembled(c) if c.is_empty()
         ));
+    }
+
+    #[test]
+    fn progress_label_is_component_space_version_per_spec() {
+        // Spec §5.4: the bar/line is labelled "cuda_nvcc 12.4.131", not the
+        // cache file name.
+        assert_eq!(
+            super::progress_label("cuda_nvcc", "cuda_nvcc-windows-x86_64-12.4.131-archive.zip"),
+            "cuda_nvcc 12.4.131"
+        );
+    }
+
+    #[test]
+    fn progress_label_falls_back_to_component_for_odd_archive_names() {
+        assert_eq!(super::progress_label("cuda_nvcc", "weird.zip"), "cuda_nvcc");
     }
 
     #[test]
@@ -669,6 +717,60 @@ mod place_tests {
             vec![],
         );
         assert!(inst.smoke_test(base.path()).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod default_roots_tests {
+    use super::*;
+
+    // Forward slashes keep the fixture paths host-neutral: `Path::parent` only
+    // splits on `\` on Windows, and Windows accepts `/` too.
+    #[test]
+    fn roots_from_env_collects_program_files_then_cuda_path_parents() {
+        let vars = vec![
+            ("PATH".to_string(), "C:/Windows".to_string()),
+            (
+                "CUDA_PATH".to_string(),
+                "C:/Toolkits/CUDA/v12.4".to_string(),
+            ),
+            (
+                "CUDA_PATH_V12_6".to_string(),
+                "D:/Other/CUDA/v12.6".to_string(),
+            ),
+            ("ProgramFiles".to_string(), "C:/Program Files".to_string()),
+        ];
+        assert_eq!(
+            roots_from_env(vars),
+            vec![
+                PathBuf::from("C:/Program Files")
+                    .join("NVIDIA GPU Computing Toolkit")
+                    .join("CUDA"),
+                PathBuf::from("C:/Toolkits/CUDA"),
+                PathBuf::from("D:/Other/CUDA"),
+            ]
+        );
+    }
+
+    #[test]
+    fn roots_from_env_is_empty_for_an_unrelated_env() {
+        let vars = vec![("HOME".to_string(), "/home/ci".to_string())];
+        assert!(roots_from_env(vars).is_empty());
+    }
+
+    #[test]
+    fn with_default_roots_wires_the_default_scan_roots() {
+        // Locks the pipeline constructor to `default_roots()` (not an empty
+        // list, which would make degrade-to-adopt scan nothing). The expected
+        // value is env-dependent on the host, but the delegation is what is
+        // being pinned here; `roots_from_env` is asserted exactly above.
+        let inst = WindowsInstaller::with_default_roots(
+            PathBuf::from("/tmp/cache"),
+            PathBuf::from("/tmp/versions"),
+        );
+        assert_eq!(inst.roots, default_roots());
+        assert_eq!(inst.cache_dir, PathBuf::from("/tmp/cache"));
+        assert_eq!(inst.dest_base, PathBuf::from("/tmp/versions"));
     }
 }
 
