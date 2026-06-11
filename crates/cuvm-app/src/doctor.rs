@@ -312,15 +312,68 @@ pub fn check_path_hygiene(s: &EnvSnapshot) -> Vec<Finding> {
     out
 }
 
-/// Compose every v1 diagnostic into one ordered report. Pure: all inputs are pre-read.
+/// Spec §11: validate the active bundle's cuDNN pairing against the §12
+/// matrix. Pure — the CLI passes the active toolkit + its paired cuDNN in.
+pub fn check_cudnn_pairing(
+    engine: &dyn CompatEngine,
+    active: Option<&Version>,
+    cudnn: Option<&Version>,
+) -> Finding {
+    let Some(toolkit) = active else {
+        return Finding {
+            code: "CUDNN_PAIRING".into(),
+            severity: Severity::Ok,
+            title: "cuDNN pairing".into(),
+            detail: "no active toolkit; pairing not checked".into(),
+            hint: None,
+        };
+    };
+    let Some(cudnn) = cudnn else {
+        return Finding {
+            code: "CUDNN_PAIRING".into(),
+            severity: Severity::Ok,
+            title: "no cuDNN paired".into(),
+            detail: format!("toolkit {} has no cuDNN linked", toolkit.raw),
+            hint: Some(format!(
+                "pair one with `cuvm cudnn install <ver> --for {}`",
+                toolkit.raw
+            )),
+        };
+    };
+    let verdict = engine.validate_pair(toolkit, cudnn);
+    if verdict.ok {
+        Finding {
+            code: "CUDNN_PAIRING".into(),
+            severity: Severity::Ok,
+            title: "cuDNN pairing".into(),
+            detail: verdict.reason,
+            hint: None,
+        }
+    } else {
+        Finding {
+            code: "CUDNN_MISMATCH".into(),
+            severity: verdict.severity,
+            title: "cuDNN does not pair with the active toolkit".into(),
+            detail: verdict.reason,
+            hint: Some(format!(
+                "install a compatible line: `cuvm cudnn install <ver> --for {}`",
+                toolkit.raw
+            )),
+        }
+    }
+}
+
+/// Compose every diagnostic into one ordered report. Pure: all inputs are pre-read.
 pub fn run_doctor(
     engine: &dyn CompatEngine,
     driver: &Driver,
     active: Option<&Version>,
+    cudnn: Option<&Version>,
     env: &EnvSnapshot,
 ) -> DoctorReport {
     let mut findings = Vec::new();
     findings.push(check_driver_ceiling(engine, driver, active));
+    findings.push(check_cudnn_pairing(engine, active, cudnn));
     findings.extend(check_path_hygiene(env));
     DoctorReport { findings }
 }
@@ -569,6 +622,70 @@ mod hygiene_tests {
 }
 
 #[cfg(test)]
+mod cudnn_pairing_tests {
+    use super::ceiling_tests::MockCompat;
+    use super::*;
+    use crate::{Severity, Verdict};
+    use cuvm_core::Version;
+
+    fn v(s: &str) -> Version {
+        Version::parse(s).unwrap()
+    }
+
+    #[test]
+    fn cudnn_pairing_ok_when_the_pair_validates() {
+        let mut engine = MockCompat::new();
+        engine.expect_validate_pair().returning(|_, _| Verdict {
+            ok: true,
+            severity: Severity::Ok,
+            reason: "cuDNN 9.8.0 supports CUDA 12.x".into(),
+            forward_compat_possible: false,
+        });
+        let f = check_cudnn_pairing(&engine, Some(&v("12.4.1")), Some(&v("9.8.0")));
+        assert_eq!(f.code, "CUDNN_PAIRING");
+        assert_eq!(f.severity, Severity::Ok);
+    }
+
+    #[test]
+    fn cudnn_pairing_blocks_on_a_matrix_mismatch() {
+        let mut engine = MockCompat::new();
+        engine.expect_validate_pair().returning(|_, _| Verdict {
+            ok: false,
+            severity: Severity::Block,
+            reason: "cuDNN 8.9.7 does not support CUDA 13.x (needs cuDNN 9.x)".into(),
+            forward_compat_possible: false,
+        });
+        let f = check_cudnn_pairing(&engine, Some(&v("13.0.0")), Some(&v("8.9.7")));
+        assert_eq!(f.code, "CUDNN_MISMATCH");
+        assert_eq!(f.severity, Severity::Block);
+        assert!(f.detail.contains("does not support"), "{}", f.detail);
+        assert!(f.hint.is_some());
+    }
+
+    #[test]
+    fn cudnn_pairing_is_ok_with_a_hint_when_no_cudnn_is_paired() {
+        let engine = MockCompat::new(); // validate_pair must not be called
+        let f = check_cudnn_pairing(&engine, Some(&v("12.4.1")), None);
+        assert_eq!(f.code, "CUDNN_PAIRING");
+        assert_eq!(f.severity, Severity::Ok);
+        assert!(f
+            .hint
+            .as_deref()
+            .unwrap_or_default()
+            .contains("cuvm cudnn install"));
+    }
+
+    #[test]
+    fn cudnn_pairing_skips_quietly_with_no_active_toolkit() {
+        let engine = MockCompat::new();
+        let f = check_cudnn_pairing(&engine, None, None);
+        assert_eq!(f.code, "CUDNN_PAIRING");
+        assert_eq!(f.severity, Severity::Ok);
+        assert!(f.detail.contains("no active toolkit"), "{}", f.detail);
+    }
+}
+
+#[cfg(test)]
 mod aggregate_tests {
     use super::*;
     use crate::{CompatEngine, Severity, Verdict};
@@ -617,7 +734,7 @@ mod aggregate_tests {
             gpu_class: GpuClass::GeForce,
         };
         let active = Version::parse("12.4.1").unwrap();
-        let report = run_doctor(&engine, &driver, Some(&active), &broken_snapshot());
+        let report = run_doctor(&engine, &driver, Some(&active), None, &broken_snapshot());
 
         // The NVCC_MISMATCH block drives a nonzero exit.
         assert_eq!(report.exit_code(), 2);

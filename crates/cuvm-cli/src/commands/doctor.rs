@@ -29,7 +29,9 @@ pub fn run(deps: &Deps) -> Result<i32> {
         path_sep: path_sep(),
     };
 
-    let report = run_doctor(deps.compat.as_ref(), &driver, active.as_ref(), &env);
+    // cuDNN pairing derivation lands with the cudnn CLI wiring (next WU); until
+    // then doctor reports the "no cuDNN paired" hint for any active toolkit.
+    let report = run_doctor(deps.compat.as_ref(), &driver, active.as_ref(), None, &env);
     print!("{report}");
     println!();
     Ok(report.exit_code())
