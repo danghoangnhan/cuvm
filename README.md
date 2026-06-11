@@ -5,11 +5,12 @@
 per-shell, with no root and zero runtime dependencies. Linux / WSL **and**
 Windows.
 
-> **Status — Milestone 2.** `cuvm` downloads and installs CUDA toolkits from
-> NVIDIA's per-component redistributables on Linux/WSL and Windows (when a
-> download is blocked on Windows, `install` falls back to adopting an
-> existing toolkit in place), on top of the M1 *adopt / switch / pin / doctor*
-> feature set. cuDNN pairing lands in M3.
+> **Status — Milestone 3.** cuDNN pairing shipped: `install` pairs each
+> toolkit with a matching cuDNN via EULA-gated auto-download from NVIDIA's
+> account-free cuDNN redist, and user-supplied archives can always be
+> ingested instead. Payloads live in a content-addressed store
+> (`~/.cuvm/cudnn/<sha256>/`) linked into the toolkit tree, and `doctor`
+> validates the toolkit↔cuDNN pairing.
 
 ## Install
 
@@ -51,11 +52,16 @@ from a directory's `.cuda-version` pin.
 ```sh
 cuvm install 12.4 12.6            # download & install one or more toolkits
 cuvm install -r 12.4              # reinstall even if present (replace the existing install)
+cuvm install 12.4 --accept-eula   # toolkit + paired cuDNN (EULA recorded once)
+cuvm cudnn install 9.8 --for 12.4.1            # pair/retrofit a specific cuDNN
+cuvm cudnn install ./cudnn-*.tar.xz --for 12.4.1   # air-gapped: ingest a local archive
+cuvm cudnn ls                     # cuDNN payloads in the content store
 cuvm adopt /usr/local/cuda-12.4   # register an existing toolkit in place
 cuvm adopt --scan                 # discover & adopt /usr/local/cuda-* installs
 cuvm ls                           # installed toolkits + `<download available>`
 cuvm ls --output-format json      # the same list, machine-readable
 cuvm ls-remote                    # downloadable versions (alias: ls --only-downloads)
+cuvm ls-remote --cudnn            # downloadable cuDNN versions
 cuvm use 12.4                     # activate in the current shell
 cuvm default 12.6                 # set the persistent default
 cuvm pin 12.4                     # write .cuda-version in the current dir
@@ -70,6 +76,13 @@ driver's ceiling is refused unless you pass `--force`.
 
 `adopt` never moves or deletes your existing installs — it registers them in
 place (`~/.cuvm`) and `uninstall` only de-registers adopted toolkits.
+
+cuDNN auto-download is gated behind a one-time acceptance of the NVIDIA cuDNN
+EULA — pass `--accept-eula` or answer the interactive prompt once, and the
+acceptance is recorded under `~/.cuvm/eula/`. User-supplied archives
+(`cuvm cudnn install ./cudnn-*.tar.xz --for …`) are always accepted, with no
+network access required. NCCL pairing, `exec`/`shell`, and shell completions
+land in M4.
 
 ## Building from source
 
