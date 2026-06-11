@@ -10,7 +10,7 @@ use cuvm_app::{CompatEngine, Inventory, RegistryClient};
 use cuvm_core::{current_platform, CudnnRecord, Source, Version};
 use cuvm_store::cudnn_store;
 use cuvm_store::eula;
-use cuvm_store::Layout;
+use cuvm_store::{read_meta, write_meta, Layout};
 
 /// What the EULA gate decided (D7).
 #[derive(Debug, PartialEq, Eq)]
@@ -239,7 +239,18 @@ fn store_link_record(
         installed_at: time::OffsetDateTime::now_utc(),
     };
     cudnn_store::write_cudnn_meta(&target.root, &record)?;
+    // Mirror into the toolkit's VersionMeta sidecar so BOTH acquisition paths
+    // (in-install pairing — the sidecar exists by now, written during place —
+    // and a later `cuvm cudnn install` retrofit) keep it current. Best-effort
+    // read-modify-write keeps the other fields the installer wrote.
+    let meta_path = target.root.join(".cuvm-meta.json");
+    if let Ok(mut meta) = read_meta(&meta_path) {
+        meta.cudnn = Some(version.raw.clone());
+        let _ = write_meta(&meta_path, &meta);
+    }
     let mut manifest = inventory.load()?;
+    // On fresh installs this loop is vestigial (the bundle is not recorded yet;
+    // install_one records cudnn in the BundleRecord) — it matters on retrofit.
     for b in &mut manifest.bundles {
         if b.version == target.handle {
             b.cudnn = Some(version.raw.clone());

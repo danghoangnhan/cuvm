@@ -173,28 +173,42 @@ fn make_cudnn_tarxz(dir: &Path, ver: &str, cuda_major: u32) -> (Vec<u8>, String)
     (bytes, sha)
 }
 
-/// Mock cuDNN redist: index lists 9.8.0 (+ 8.9.7 with no manifest), manifest
-/// nests linux-x86_64/cuda12, tarball served at the verbatim `relative_path`.
-/// Returns the archive's sha256.
+/// Mock cuDNN redist index: lists every label the fixtures know about (8.9.7
+/// has no manifest served — index-only). Register this exactly ONCE per server;
+/// tests that never fetch a listed label are unaffected by its presence.
 #[cfg(unix)]
-fn serve_cudnn_980(server: &MockServer, fixtures: &Path) -> String {
-    let (bytes, sha) = make_cudnn_tarxz(fixtures, "9.8.0.87", 12);
-    let rel = "cudnn/linux-x86_64/cudnn-linux-x86_64-9.8.0.87_cuda12-archive.tar.xz";
+fn serve_cudnn_index(server: &MockServer) {
     server.mock(|when, then| {
         when.method(GET).path("/cudnn/");
         then.status(200).body(
             r#"<html><body>
             <a href="redistrib_8.9.7.json">redistrib_8.9.7.json</a>
+            <a href="redistrib_9.7.0.json">redistrib_9.7.0.json</a>
             <a href="redistrib_9.8.0.json">redistrib_9.8.0.json</a>
             </body></html>"#,
         );
     });
+}
+
+/// Mock one cuDNN release: manifest at `redistrib_<label>.json` (nesting
+/// linux-x86_64/cuda12) + tarball served at the verbatim `relative_path`.
+/// Does NOT register the `/cudnn/` index — call [`serve_cudnn_index`] once.
+/// Returns the archive's sha256.
+#[cfg(unix)]
+fn serve_cudnn_version(
+    server: &MockServer,
+    fixtures: &Path,
+    label: &str,
+    product_ver: &str,
+) -> String {
+    let (bytes, sha) = make_cudnn_tarxz(fixtures, product_ver, 12);
+    let rel = format!("cudnn/linux-x86_64/cudnn-linux-x86_64-{product_ver}_cuda12-archive.tar.xz");
     let manifest = format!(
         r#"{{
-  "release_label": "9.8.0",
+  "release_label": "{label}",
   "cudnn": {{
     "license_path": "cudnn/LICENSE.txt",
-    "version": "9.8.0.87",
+    "version": "{product_ver}",
     "linux-x86_64": {{
       "cuda12": {{
         "relative_path": "{rel}",
@@ -208,7 +222,8 @@ fn serve_cudnn_980(server: &MockServer, fixtures: &Path) -> String {
         size = bytes.len()
     );
     server.mock(|when, then| {
-        when.method(GET).path("/cudnn/redistrib_9.8.0.json");
+        when.method(GET)
+            .path(format!("/cudnn/redistrib_{label}.json"));
         then.status(200).body(manifest);
     });
     server.mock(|when, then| {
@@ -216,6 +231,14 @@ fn serve_cudnn_980(server: &MockServer, fixtures: &Path) -> String {
         then.status(200).body(bytes.clone());
     });
     sha
+}
+
+/// Index + the 9.8.0 release (the matrix-default pick for CUDA 12.x fixtures).
+/// Returns the archive's sha256.
+#[cfg(unix)]
+fn serve_cudnn_980(server: &MockServer, fixtures: &Path) -> String {
+    serve_cudnn_index(server);
+    serve_cudnn_version(server, fixtures, "9.8.0", "9.8.0.87")
 }
 
 /// `cuvm` with the standard install env trio + an explicit cuDNN registry base
@@ -649,6 +672,38 @@ fn install_pairs_cudnn_by_default_with_accepted_eula() {
     // The manifest records the PICKED index label (9.8.0), not the file version.
     let manifest = std::fs::read_to_string(home.child("manifest.json").path()).unwrap();
     assert!(manifest.contains("\"cudnn\": \"9.8.0\""), "{manifest}");
+    // The VersionMeta sidecar mirrors the pairing (store_link_record tail).
+    let meta: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(home.child("versions/12.4.1/.cuvm-meta.json").path()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(meta["cudnn"], "9.8.0", "{meta}");
+}
+
+#[cfg(unix)]
+#[test]
+fn install_pairs_the_explicitly_requested_cudnn() {
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    let server = MockServer::start();
+    serve_redist_124(&server, fixtures.path());
+    // BOTH releases are served; the matrix default would pick 9.8.0, so a
+    // broken `--cudnn` wire cannot be masked by the default pairing.
+    serve_cudnn_index(&server);
+    serve_cudnn_version(&server, fixtures.path(), "9.7.0", "9.7.0.66");
+    serve_cudnn_version(&server, fixtures.path(), "9.8.0", "9.8.0.87");
+    let registry = format!("{}/redist/", server.base_url());
+    let cudnn_reg = format!("{}/cudnn/", server.base_url());
+
+    cuvm_with(&home, &registry, &cudnn_reg)
+        .args(["install", "12.4", "--cudnn", "9.7", "--accept-eula"])
+        .assert()
+        .success()
+        .stdout(contains("+ cuda 12.4.1"));
+
+    let manifest = std::fs::read_to_string(home.child("manifest.json").path()).unwrap();
+    assert!(manifest.contains("\"cudnn\": \"9.7.0\""), "{manifest}");
+    assert!(!manifest.contains("\"cudnn\": \"9.8.0\""), "{manifest}");
 }
 
 #[cfg(unix)]
@@ -737,6 +792,13 @@ fn cudnn_install_retrofits_an_installed_toolkit() {
     );
     home.child("versions/12.4.1/.cuvm-cudnn.json")
         .assert(predicates::path::exists());
+    // Retrofit must ALSO refresh the VersionMeta sidecar (`--no-cudnn` left it
+    // null); stale `cudnn: null` here was the review finding.
+    let meta: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(home.child("versions/12.4.1/.cuvm-meta.json").path()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(meta["cudnn"], "9.8.0", "{meta}");
 }
 
 #[cfg(unix)]

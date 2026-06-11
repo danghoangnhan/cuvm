@@ -11,7 +11,7 @@ use cuvm_app::{
 };
 use cuvm_core::manifest::BundleRecord;
 use cuvm_core::{current_platform, Driver, GpuClass, Os, Source, Version, VersionMeta};
-use cuvm_store::{read_meta, redist_cache, write_meta, Layout};
+use cuvm_store::{redist_cache, Layout};
 
 use super::cudnn;
 
@@ -340,12 +340,14 @@ fn install_one(
     };
 
     // 6. Record a Downloaded bundle (path is `versions/<handle>`, relative to home).
+    // (The VersionMeta sidecar's `cudnn` field was already mirrored inside
+    // `store_link_record` — shared with the `cuvm cudnn install` retrofit.)
     let mut manifest = inventory.load()?;
     let record = BundleRecord {
         version: handle.clone(),
         source: Source::Downloaded,
         path: format!("versions/{handle}"),
-        cudnn: cudnn_version.clone(),
+        cudnn: cudnn_version,
         components,
         sha256: None,
         installed_at,
@@ -353,16 +355,6 @@ fn install_one(
     manifest.bundles.retain(|b| b.version != record.version);
     manifest.bundles.push(record);
     inventory.save(&manifest)?;
-
-    if cudnn_version.is_some() {
-        // Mirror into the toolkit sidecar (read-modify-write keeps the other
-        // fields the installer wrote; best-effort like the rich sidecar).
-        let meta_path = dst.join(".cuvm-meta.json");
-        if let Ok(mut meta) = read_meta(&meta_path) {
-            meta.cudnn = cudnn_version;
-            let _ = write_meta(&meta_path, &meta);
-        }
-    }
 
     if existed {
         Ok(InstallOutcome::Reinstalled { handle, path: dst })
