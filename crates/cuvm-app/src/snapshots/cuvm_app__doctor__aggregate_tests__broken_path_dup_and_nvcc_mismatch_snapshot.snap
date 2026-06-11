@@ -5,9 +5,9 @@ expression: report.to_string()
 ---
 [OK] Active toolkit within driver ceiling (DRIVER_CEILING)
     active CUDA 12.4.1 <= driver ceiling 12.6 (driver 565.57.01).
-[OK] no cuDNN paired (CUDNN_PAIRING)
-    toolkit 12.4.1 has no cuDNN linked
-    hint: pair one with `cuvm cudnn install <ver> --for 12.4.1`
+[OK] No cuDNN paired (CUDNN_PAIRING)
+    toolkit 12.4.1 has no cuDNN linked.
+    hint: Pair one with `cuvm cudnn install <ver> --for 12.4.1`
 [WARN] Multiple CUDA bin directories on PATH (PATH_DUP_CUDA)
     PATH contains 2 CUDA bin entries: /opt/cuda-12.2/bin, /home/u/.cuvm/versions/12.4.1/bin
     hint: Run `cuvm use <ver>` to rebuild a clean CUVM_INJECTED segment.

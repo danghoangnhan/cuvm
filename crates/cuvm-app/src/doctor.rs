@@ -1,4 +1,5 @@
-//! `doctor` v1 use-case: pure diagnostics over an already-probed environment.
+//! `doctor` use-case: pure diagnostics over an already-probed environment —
+//! driver ceiling + PATH hygiene (v1), cuDNN pairing (v2).
 //! No I/O here — the CLI reads env strings and the driver/bundle, and passes them in.
 
 use std::fmt;
@@ -324,7 +325,7 @@ pub fn check_cudnn_pairing(
             code: "CUDNN_PAIRING".into(),
             severity: Severity::Ok,
             title: "cuDNN pairing".into(),
-            detail: "no active toolkit; pairing not checked".into(),
+            detail: "no active toolkit; pairing not checked.".into(),
             hint: None,
         };
     };
@@ -332,10 +333,10 @@ pub fn check_cudnn_pairing(
         return Finding {
             code: "CUDNN_PAIRING".into(),
             severity: Severity::Ok,
-            title: "no cuDNN paired".into(),
-            detail: format!("toolkit {} has no cuDNN linked", toolkit.raw),
+            title: "No cuDNN paired".into(),
+            detail: format!("toolkit {} has no cuDNN linked.", toolkit.raw),
             hint: Some(format!(
-                "pair one with `cuvm cudnn install <ver> --for {}`",
+                "Pair one with `cuvm cudnn install <ver> --for {}`",
                 toolkit.raw
             )),
         };
@@ -356,7 +357,7 @@ pub fn check_cudnn_pairing(
             title: "cuDNN does not pair with the active toolkit".into(),
             detail: verdict.reason,
             hint: Some(format!(
-                "install a compatible line: `cuvm cudnn install <ver> --for {}`",
+                "Install a compatible line: `cuvm cudnn install <ver> --for {}`",
                 toolkit.raw
             )),
         }
@@ -659,7 +660,14 @@ mod cudnn_pairing_tests {
         assert_eq!(f.code, "CUDNN_MISMATCH");
         assert_eq!(f.severity, Severity::Block);
         assert!(f.detail.contains("does not support"), "{}", f.detail);
-        assert!(f.hint.is_some());
+        assert!(
+            f.hint
+                .as_deref()
+                .unwrap_or_default()
+                .contains("cuvm cudnn install"),
+            "{:?}",
+            f.hint
+        );
     }
 
     #[test]
