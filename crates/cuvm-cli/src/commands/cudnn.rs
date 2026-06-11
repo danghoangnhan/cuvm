@@ -68,6 +68,14 @@ pub fn parse_cudnn_archive_name(name: &str) -> Option<(Version, u32)> {
     Some((version, major))
 }
 
+/// True when `want` is a version-field prefix of `have` (`9.8` matches
+/// `9.8.0.87`). Compares parsed numeric fields — unlike the string-field
+/// variants in install.rs/list.rs (workspace-wide dedup deferred to M4).
+fn version_prefix_matches(want: &Version, have: &Version) -> bool {
+    want.fields.len() <= have.fields.len()
+        && want.fields.iter().zip(&have.fields).all(|(a, b)| a == b)
+}
+
 /// The installed toolkit a cuDNN is being paired with.
 pub struct Target {
     /// Manifest handle (the bundle's `version` string).
@@ -97,10 +105,7 @@ pub fn resolve_target(inventory: &dyn Inventory, layout: &Layout, spec: &str) ->
         .filter(|b| {
             b.version == spec
                 || Version::parse(&b.version).is_ok_and(|v| {
-                    Version::parse(spec).is_ok_and(|s| {
-                        s.fields.len() <= v.fields.len()
-                            && s.fields.iter().zip(&v.fields).all(|(a, f)| a == f)
-                    })
+                    Version::parse(spec).is_ok_and(|s| version_prefix_matches(&s, &v))
                 })
         })
         .max_by_key(|b| Version::parse(&b.version).ok().map(|v| v.fields.clone()))
@@ -134,17 +139,22 @@ fn license_url() -> String {
 /// the notice/prompt when interactive. Returns Ok(true) to proceed.
 fn gate_and_maybe_record(layout: &Layout, accept_flag: bool) -> Result<bool> {
     let interactive = std::io::stderr().is_terminal() && std::io::stdin().is_terminal();
-    let decision = eula_gate(eula::cudnn_accepted(layout), accept_flag, interactive, || {
-        eprintln!(
+    let decision = eula_gate(
+        eula::cudnn_accepted(layout),
+        accept_flag,
+        interactive,
+        || {
+            eprintln!(
             "cuDNN is distributed under the NVIDIA cuDNN EULA ({}).\n\
              Downloading it with cuvm means you accept those terms (recorded once under ~/.cuvm/eula/).",
             license_url()
         );
-        eprint!("Accept and continue? [y/N] ");
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line).unwrap_or(0);
-        matches!(line.trim(), "y" | "Y" | "yes")
-    });
+            eprint!("Accept and continue? [y/N] ");
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).unwrap_or(0);
+            matches!(line.trim(), "y" | "Y" | "yes")
+        },
+    );
     match decision {
         EulaDecision::Proceed { record } => {
             if record {
@@ -199,8 +209,21 @@ fn store_link_record(
 ) -> Result<CudnnRecord> {
     let os = current_platform().os;
     let store = extract_into_store(layout, archive, sha256)?;
+    // Ordering invariant: never unlink the existing cuDNN until the replacement
+    // payload is known good. A plausible-but-wrong archive (e.g. a cuDNN
+    // *samples* redist: parses and validates fine, ships no libcudnn*) must
+    // fail HERE, leaving the current pairing untouched.
+    if cudnn_store::lib_names(&store).is_empty() {
+        bail!(
+            "archive contained no libcudnn* libraries (looked in lib/ and bin/ of {})",
+            store.display()
+        );
+    }
     cuvm_platform::cudnn_link::unlink_cudnn(os, &target.root)?;
     let libs = cuvm_platform::cudnn_link::link_cudnn(os, &store, &target.root)?;
+    // Second line of defense: the linker applies its own (platform-specific)
+    // selection; an empty result here still means the pairing must not be
+    // recorded, even though the old links are already gone.
     if libs.is_empty() {
         bail!(
             "archive contained no libcudnn* libraries (looked in lib/ and bin/ of {})",
@@ -234,10 +257,7 @@ fn pick_listed(available: &[Version], spec: &str) -> Option<Version> {
     let want = Version::parse(spec).ok()?;
     available
         .iter()
-        .filter(|v| {
-            want.fields.len() <= v.fields.len()
-                && want.fields.iter().zip(&v.fields).all(|(a, b)| a == b)
-        })
+        .filter(|v| version_prefix_matches(&want, v))
         .max()
         .cloned()
 }
@@ -276,7 +296,9 @@ fn install_from_registry(
     let arts = registry
         .resolve_cudnn(&picked, &platform, cuda_major)
         .with_context(|| format!("resolving cuDNN {} for cuda{cuda_major}", picked.raw))?;
-    let art = arts.first().context("registry returned no cuDNN artifact")?;
+    let art = arts
+        .first()
+        .context("registry returned no cuDNN artifact")?;
     let file_name = art
         .relative_path
         .rsplit('/')
@@ -327,8 +349,8 @@ fn install_from_file(
     if !verdict.ok {
         bail!("{}", verdict.reason);
     }
-    let sha256 = cuvm_download::sha256_file(file)
-        .with_context(|| format!("hashing {}", file.display()))?;
+    let sha256 =
+        cuvm_download::sha256_file(file).with_context(|| format!("hashing {}", file.display()))?;
     store_link_record(
         inventory,
         layout,
@@ -364,7 +386,13 @@ pub fn run_cudnn_install(
         install_from_file(engine, inventory, &layout, &target, path)?
     } else {
         install_from_registry(
-            registry, engine, inventory, &layout, &target, what, accept_eula,
+            registry,
+            engine,
+            inventory,
+            &layout,
+            &target,
+            what,
+            accept_eula,
         )?
         .ok_or_else(|| anyhow::anyhow!("cuDNN EULA not accepted; nothing installed"))?
     };
@@ -396,7 +424,15 @@ pub fn pair_for_install(
     accept_eula: bool,
 ) -> Option<String> {
     let spec = explicit.unwrap_or("default");
-    match install_from_registry(registry, engine, inventory, layout, target, spec, accept_eula) {
+    match install_from_registry(
+        registry,
+        engine,
+        inventory,
+        layout,
+        target,
+        spec,
+        accept_eula,
+    ) {
         Ok(Some(rec)) => Some(rec.version),
         Ok(None) => None, // EULA refusal: notice already printed by the gate
         Err(e) => {
@@ -426,7 +462,7 @@ pub fn run_cudnn_ls(inventory: &dyn Inventory, home: &Path) -> Result<()> {
                 "{} (cuda{})  {}  ->  {}",
                 rec.version,
                 rec.cuda_major,
-                &rec.sha256[..rec.sha256.len().min(12)],
+                rec.sha256.get(..12).unwrap_or(&rec.sha256),
                 b.version
             );
             any = true;
@@ -440,7 +476,7 @@ pub fn run_cudnn_ls(inventory: &dyn Inventory, home: &Path) -> Result<()> {
             if name.starts_with('.') || referenced.contains(&name) {
                 continue;
             }
-            println!("{}  (unreferenced)", &name[..name.len().min(12)]);
+            println!("{}  (unreferenced)", name.get(..12).unwrap_or(&name));
             any = true;
         }
     }
@@ -492,5 +528,34 @@ mod tests {
         assert_eq!(major, 11);
         assert!(parse_cudnn_archive_name("random.tar.xz").is_none());
         assert!(parse_cudnn_archive_name("cudnn-linux-x86_64-9.8.0-archive.tar.xz").is_none());
+    }
+
+    fn available() -> Vec<Version> {
+        ["8.9.7.29", "9.8.0.87", "9.8.1.3", "9.10.0.56"]
+            .iter()
+            .map(|s| Version::parse(s).expect("test version parses"))
+            .collect()
+    }
+
+    #[test]
+    fn pick_listed_latest_takes_newest_overall() {
+        let picked = pick_listed(&available(), "latest").expect("non-empty list");
+        assert_eq!(picked.raw, "9.10.0.56");
+    }
+
+    #[test]
+    fn pick_listed_prefix_takes_newest_matching() {
+        let picked = pick_listed(&available(), "9.8").expect("9.8.* exists");
+        assert_eq!(picked.raw, "9.8.1.3");
+    }
+
+    #[test]
+    fn pick_listed_no_match_is_none() {
+        assert!(pick_listed(&available(), "10.1").is_none());
+    }
+
+    #[test]
+    fn pick_listed_unparseable_spec_is_none() {
+        assert!(pick_listed(&available(), "not-a-version").is_none());
     }
 }
