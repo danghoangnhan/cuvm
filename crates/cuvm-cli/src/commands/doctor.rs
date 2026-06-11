@@ -29,9 +29,22 @@ pub fn run(deps: &Deps) -> Result<i32> {
         path_sep: path_sep(),
     };
 
-    // cuDNN pairing derivation lands with the cudnn CLI wiring (next WU); until
-    // then doctor reports the "no cuDNN paired" hint for any active toolkit.
-    let report = run_doctor(deps.compat.as_ref(), &driver, active.as_ref(), None, &env);
+    // The active bundle's recorded cuDNN pairing (manifest `cudnn` field), fed
+    // to the §12 matrix check. Absent record or unparsable version => None,
+    // which doctor reports as the "No cuDNN paired" hint.
+    let cudnn: Option<Version> = active.as_ref().and_then(|a| {
+        let manifest = deps.inventory.load().ok()?;
+        let rec = manifest.bundles.iter().find(|b| b.version == a.raw)?;
+        Version::parse(rec.cudnn.as_deref()?).ok()
+    });
+
+    let report = run_doctor(
+        deps.compat.as_ref(),
+        &driver,
+        active.as_ref(),
+        cudnn.as_ref(),
+        &env,
+    );
     print!("{report}");
     println!();
     Ok(report.exit_code())

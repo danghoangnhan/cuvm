@@ -948,3 +948,62 @@ fn cudnn_ls_shows_paired_and_unreferenced_payloads() {
         .stdout(contains("->  12.4.1"))
         .stdout(contains("deadbeefdead  (unreferenced)"));
 }
+
+// ---- M3: doctor reads the active bundle's cuDNN pairing (WU-18) -------------
+
+/// The fake smi driver (545.23.08) sits below 12.4's strict minimum, so the
+/// driver finding is a Warn and doctor exits 1 — assert on stdout content, not
+/// exit status. `CUVM_CURRENT` is the breadcrumb doctor reads first when
+/// determining the active toolkit (see `commands/doctor.rs::active_version`).
+#[cfg(unix)]
+#[test]
+fn doctor_reports_the_cudnn_pairing_of_the_active_bundle() {
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    let server = MockServer::start();
+    serve_redist_124(&server, fixtures.path());
+    serve_cudnn_980(&server, fixtures.path());
+    let registry = format!("{}/redist/", server.base_url());
+    let cudnn_reg = format!("{}/cudnn/", server.base_url());
+    let smi = fake_nvidia_smi(fixtures.path());
+
+    cuvm_with(&home, &registry, &cudnn_reg)
+        .args(["install", "12.4", "--accept-eula", "--force"])
+        .assert()
+        .success();
+
+    // The manifest records the picked index label (9.8.0); doctor must feed it
+    // to the compat engine and surface the engine's pairing verdict verbatim.
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .env("CUVM_NVIDIA_SMI", &smi)
+        .env("CUVM_CURRENT", "12.4.1")
+        .arg("doctor")
+        .assert()
+        .stdout(contains("CUDNN_PAIRING").and(contains("cuDNN 9.8.0 supports CUDA 12.x")));
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_hints_when_no_cudnn_is_paired() {
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    let server = MockServer::start();
+    serve_redist_124(&server, fixtures.path());
+    let registry = format!("{}/redist/", server.base_url());
+    let smi = fake_nvidia_smi(fixtures.path());
+
+    // --no-cudnn => the cuDNN base may stay unroutable; no pairing is recorded.
+    cuvm_with(&home, &registry, "http://127.0.0.1:1/cudnn/")
+        .args(["install", "12.4", "--no-cudnn", "--force"])
+        .assert()
+        .success();
+
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .env("CUVM_NVIDIA_SMI", &smi)
+        .env("CUVM_CURRENT", "12.4.1")
+        .arg("doctor")
+        .assert()
+        .stdout(contains("No cuDNN paired").and(contains("cuvm cudnn install")));
+}
