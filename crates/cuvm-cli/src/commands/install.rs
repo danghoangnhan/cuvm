@@ -1,6 +1,5 @@
-//! `cuvm install` / `cuvm ls-remote` / `cuvm uninstall` — the M2 acquire pipeline.
-//!
-//! `--cudnn`/`--no-cudnn` parse here but are **no-ops in M2**: cuDNN pairing is M3.
+//! `cuvm install` / `cuvm ls-remote` / `cuvm uninstall` — the acquire pipeline,
+//! plus the default cuDNN pairing that follows a placed toolkit (spec §10, M3).
 
 use std::path::Path;
 
@@ -12,7 +11,9 @@ use cuvm_app::{
 };
 use cuvm_core::manifest::BundleRecord;
 use cuvm_core::{current_platform, Driver, GpuClass, Os, Source, Version, VersionMeta};
-use cuvm_store::{redist_cache, Layout};
+use cuvm_store::{read_meta, redist_cache, write_meta, Layout};
+
+use super::cudnn;
 
 /// Result of installing a single spec; drives the per-target change line and the
 /// aggregate summary (§5.1/§5.4 of the spec).
@@ -36,6 +37,16 @@ pub(crate) enum InstallOutcome {
         handle: String,
         path: std::path::PathBuf,
     },
+}
+
+/// cuDNN behavior for an install run (plan D5/D7).
+pub struct CudnnOpts {
+    /// `--cudnn <ver>` override; `None` ⇒ matrix default pairing.
+    pub explicit: Option<String>,
+    /// `--no-cudnn`.
+    pub skip: bool,
+    /// `--accept-eula`.
+    pub accept_eula: bool,
 }
 
 /// Result of the driver-ceiling compat gate. Per §11/§2.4 the gate is advisory:
@@ -113,6 +124,7 @@ pub fn run_install(
     specs: &[String],
     reinstall: bool,
     force: bool,
+    cudnn_opts: &CudnnOpts,
 ) -> Result<i32> {
     let started = std::time::Instant::now();
     let mut changed: Vec<String> = Vec::new();
@@ -129,6 +141,7 @@ pub fn run_install(
             spec,
             reinstall,
             force,
+            cudnn_opts,
         ) {
             Ok(InstallOutcome::Installed { handle, path }) => {
                 println!("+ cuda {handle}  ->  {}", path.display());
@@ -176,7 +189,8 @@ pub fn run_install(
 
 /// Install a single resolved spec: resolve newest patch, short-circuit if already
 /// installed (unless `reinstall`), compat-gate, acquire, verify, extract, place,
-/// smoke-test, then record a `Downloaded` manifest bundle. Returns the
+/// smoke-test, pair the default cuDNN (unless `--no-cudnn`; warn-and-continue),
+/// then record a `Downloaded` manifest bundle. Returns the
 /// [`InstallOutcome`] (`AlreadyPresent` / `Installed` / `Reinstalled`, or
 /// `Adopted` on the Windows degrade path) for the caller to render; it prints
 /// nothing itself.
@@ -184,7 +198,7 @@ pub fn run_install(
 /// # Errors
 /// Returns an error if resolution, the compat gate (without `--force`), download,
 /// verification, extraction, placement, the smoke test, or manifest I/O fails.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)] // flat pipeline: resolve → gate → acquire → place → pair → record
 fn install_one(
     registry: &dyn RegistryClient,
     installer: &dyn Installer,
@@ -195,6 +209,7 @@ fn install_one(
     spec: &str,
     reinstall: bool,
     force: bool,
+    cudnn_opts: &CudnnOpts,
 ) -> Result<InstallOutcome> {
     let platform = current_platform();
     let version_dir = home.join("versions");
@@ -302,13 +317,35 @@ fn install_one(
         installer.smoke_test(&dst)?;
     }
 
-    // 5. Record a Downloaded bundle (path is `versions/<handle>`, relative to home).
+    // 5. cuDNN default pairing (spec §10, plan D5): post-place, never fails
+    // the toolkit install — refusals/errors warn and record no cudnn.
+    let cudnn_version = if cudnn_opts.skip {
+        None
+    } else {
+        let target = cudnn::Target {
+            handle: handle.clone(),
+            root: dst.clone(),
+            source: Source::Downloaded,
+            toolkit_version: want.clone(),
+        };
+        cudnn::pair_for_install(
+            registry,
+            engine,
+            inventory,
+            &layout,
+            &target,
+            cudnn_opts.explicit.as_deref(),
+            cudnn_opts.accept_eula,
+        )
+    };
+
+    // 6. Record a Downloaded bundle (path is `versions/<handle>`, relative to home).
     let mut manifest = inventory.load()?;
     let record = BundleRecord {
         version: handle.clone(),
         source: Source::Downloaded,
         path: format!("versions/{handle}"),
-        cudnn: None,
+        cudnn: cudnn_version.clone(),
         components,
         sha256: None,
         installed_at,
@@ -316,6 +353,16 @@ fn install_one(
     manifest.bundles.retain(|b| b.version != record.version);
     manifest.bundles.push(record);
     inventory.save(&manifest)?;
+
+    if cudnn_version.is_some() {
+        // Mirror into the toolkit sidecar (read-modify-write keeps the other
+        // fields the installer wrote; best-effort like the rich sidecar).
+        let meta_path = dst.join(".cuvm-meta.json");
+        if let Ok(mut meta) = read_meta(&meta_path) {
+            meta.cudnn = cudnn_version;
+            let _ = write_meta(&meta_path, &meta);
+        }
+    }
 
     if existed {
         Ok(InstallOutcome::Reinstalled { handle, path: dst })

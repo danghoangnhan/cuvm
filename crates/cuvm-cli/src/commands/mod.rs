@@ -175,15 +175,24 @@ pub enum Command {
         /// Reinstall even if the version is already installed (replaces the existing install; verified cached downloads are reused).
         #[arg(long, short = 'r')]
         reinstall: bool,
-        /// Pair a specific cuDNN version (M2: parsed but a no-op; pairing lands in M3).
+        /// Pair this specific cuDNN version instead of the matrix default.
         #[arg(long)]
         cudnn: Option<String>,
-        /// Skip cuDNN pairing (M2: parsed but a no-op; pairing lands in M3).
+        /// Skip cuDNN pairing for this install.
         #[arg(long, conflicts_with = "cudnn")]
         no_cudnn: bool,
+        /// Accept the NVIDIA cuDNN EULA non-interactively (recorded once
+        /// under `~/.cuvm/eula/`).
+        #[arg(long)]
+        accept_eula: bool,
         /// Install even if the toolkit exceeds the driver ceiling.
         #[arg(long)]
         force: bool,
+    },
+    /// Manage cuDNN payloads paired with installed toolkits.
+    Cudnn {
+        #[command(subcommand)]
+        command: CudnnCommand,
     },
     /// Print the currently active bundle handle.
     Current,
@@ -226,6 +235,27 @@ pub enum Command {
         #[arg(long, value_enum)]
         os: Option<OsArg>,
     },
+}
+
+/// `cuvm cudnn <...>` (spec §7).
+#[derive(Debug, Subcommand)]
+pub enum CudnnCommand {
+    /// Download a cuDNN (or ingest a local redist archive) and link it into
+    /// an installed toolkit.
+    Install {
+        /// Version spec (`9.8`, `9.8.0`, `latest`) or a path to a local
+        /// `cudnn-<platform>-<ver>_cuda<major>-archive.{tar.xz,zip}`.
+        what: String,
+        /// Installed toolkit to pair with (e.g. `12.4.1`, or `12.4`).
+        #[arg(long = "for", value_name = "TOOLKIT")]
+        for_toolkit: String,
+        /// Accept the NVIDIA cuDNN EULA non-interactively (recorded once
+        /// under `~/.cuvm/eula/`).
+        #[arg(long)]
+        accept_eula: bool,
+    },
+    /// List cuDNN payloads in the content store and their toolkits.
+    Ls,
 }
 
 impl Command {
@@ -299,8 +329,9 @@ impl Command {
             Command::Install {
                 specs,
                 reinstall,
-                cudnn: _,
-                no_cudnn: _,
+                cudnn,
+                no_cudnn,
+                accept_eula,
                 force,
             } => {
                 let registry = build_registry();
@@ -315,9 +346,36 @@ impl Command {
                     &specs,
                     reinstall,
                     force,
+                    &install::CudnnOpts {
+                        explicit: cudnn,
+                        skip: no_cudnn,
+                        accept_eula,
+                    },
                 )?;
                 Ok(code)
             }
+            Command::Cudnn { command } => match command {
+                CudnnCommand::Install {
+                    what,
+                    for_toolkit,
+                    accept_eula,
+                } => {
+                    let registry = build_registry();
+                    cudnn::run_cudnn_install(
+                        registry.as_ref(),
+                        deps.compat.as_ref(),
+                        deps.inventory.as_ref(),
+                        &deps.home,
+                        &what,
+                        &for_toolkit,
+                        accept_eula,
+                    )
+                }
+                CudnnCommand::Ls => {
+                    cudnn::run_cudnn_ls(deps.inventory.as_ref(), &deps.home)?;
+                    Ok(0)
+                }
+            },
             Command::Current => {
                 current::run(deps)?;
                 Ok(0)
