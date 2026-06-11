@@ -41,8 +41,19 @@ impl FsInventory {
             checksum: rec.sha256.clone(),
         };
         Ok(Bundle {
+            cudnn: rec.cudnn.as_ref().and_then(|_| {
+                let meta = crate::cudnn_store::read_cudnn_meta(&toolkit.root)?;
+                let version = Version::parse(&meta.version).ok()?;
+                Some(cuvm_core::Cudnn {
+                    version,
+                    cuda_major: meta.cuda_major,
+                    source: meta.source,
+                    store: self.layout.cudnn_dir().join(&meta.sha256),
+                    sha256: meta.sha256,
+                    libs: meta.libs,
+                })
+            }),
             toolkit,
-            cudnn: None,
             extra: Vec::new(),
         })
     }
@@ -202,6 +213,51 @@ mod tests {
         assert_eq!(tk.root, dir.path().join("versions/12.4.1"));
         assert_eq!(tk.source, Source::Downloaded);
         assert!(tk.has_lib64);
+    }
+
+    #[test]
+    fn bundles_hydrate_cudnn_from_the_sidecar() {
+        let (dir, inventory) = inv();
+        let mut m = Manifest::default();
+        let mut rec = downloaded_record("12.4.1");
+        rec.cudnn = Some("9.8.0".into());
+        m.bundles.push(rec);
+        inventory.save(&m).unwrap();
+        // Sidecar next to the (fake) toolkit root.
+        let root = dir.path().join("versions/12.4.1");
+        std::fs::create_dir_all(&root).unwrap();
+        crate::cudnn_store::write_cudnn_meta(
+            &root,
+            &cuvm_core::CudnnRecord {
+                version: "9.8.0".into(),
+                cuda_major: 12,
+                source: Source::Downloaded,
+                sha256: "feedbeef".into(),
+                libs: vec!["libcudnn.so".into()],
+                installed_at: datetime!(2026-06-10 10:30:00 UTC),
+            },
+        )
+        .unwrap();
+
+        let bundles = inventory.list().unwrap();
+        let cudnn = bundles[0].cudnn.as_ref().expect("hydrated");
+        assert_eq!(cudnn.version.raw, "9.8.0");
+        assert_eq!(cudnn.cuda_major, 12);
+        assert_eq!(cudnn.sha256, "feedbeef");
+        assert_eq!(cudnn.store, dir.path().join("cudnn/feedbeef"));
+        assert_eq!(cudnn.libs, vec!["libcudnn.so".to_string()]);
+    }
+
+    #[test]
+    fn missing_sidecar_hydrates_as_none_not_error() {
+        let (_dir, inventory) = inv();
+        let mut m = Manifest::default();
+        let mut rec = downloaded_record("12.4.1");
+        rec.cudnn = Some("9.8.0".into());
+        m.bundles.push(rec);
+        inventory.save(&m).unwrap();
+        let bundles = inventory.list().unwrap();
+        assert!(bundles[0].cudnn.is_none());
     }
 
     #[test]
