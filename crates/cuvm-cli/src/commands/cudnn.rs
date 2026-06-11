@@ -444,7 +444,15 @@ pub fn pair_for_install(
         spec,
         accept_eula,
     ) {
-        Ok(Some(rec)) => Some(rec.version),
+        Ok(Some(rec)) => {
+            // Channel contract: a successful pairing is a CHANGE, so it gets
+            // the same stdout change line the explicit `cudnn install` prints.
+            println!(
+                "+ cudnn {} (cuda{})  ->  {}",
+                rec.version, rec.cuda_major, target.handle
+            );
+            Some(rec.version)
+        }
         Ok(None) => None, // EULA refusal: notice already printed by the gate
         Err(e) => {
             eprintln!("cuvm: warning: cuDNN pairing failed: {e:#}; continuing without cuDNN");

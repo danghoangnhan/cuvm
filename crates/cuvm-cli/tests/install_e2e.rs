@@ -646,7 +646,9 @@ fn install_pairs_cudnn_by_default_with_accepted_eula() {
         .args(["install", "12.4", "--accept-eula"])
         .assert()
         .success()
-        .stdout(contains("+ cuda 12.4.1"));
+        .stdout(contains("+ cuda 12.4.1"))
+        // The pairing is a CHANGE, so it gets its own stdout change line.
+        .stdout(contains("+ cudnn 9.8.0 (cuda12)  ->  12.4.1"));
 
     // The acceptance moment was recorded once under eula/.
     home.child("eula/cudnn.json")
@@ -699,7 +701,8 @@ fn install_pairs_the_explicitly_requested_cudnn() {
         .args(["install", "12.4", "--cudnn", "9.7", "--accept-eula"])
         .assert()
         .success()
-        .stdout(contains("+ cuda 12.4.1"));
+        .stdout(contains("+ cuda 12.4.1"))
+        .stdout(contains("+ cudnn 9.7.0 (cuda12)  ->  12.4.1"));
 
     let manifest = std::fs::read_to_string(home.child("manifest.json").path()).unwrap();
     assert!(manifest.contains("\"cudnn\": \"9.7.0\""), "{manifest}");
