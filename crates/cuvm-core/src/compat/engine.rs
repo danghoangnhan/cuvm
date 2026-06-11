@@ -193,7 +193,7 @@ impl DefaultCompatEngine {
             .iter()
             .filter(|cand| {
                 self.cudnn
-                    .entry_for(cand)
+                    .line_for(cand)
                     .is_some_and(|e| e.cuda_majors.contains(&major))
             })
             .max()
@@ -206,7 +206,7 @@ impl DefaultCompatEngine {
         let major = toolkit.major();
         let supported = self
             .cudnn
-            .entry_for(cudnn)
+            .line_for(cudnn)
             .is_some_and(|e| e.cuda_majors.contains(&major));
         if supported {
             CompatOutcome {
@@ -253,6 +253,10 @@ mod tests {
             },
             gpu_class: class,
         }
+    }
+
+    fn v(s: &str) -> Version {
+        Version::parse(s).unwrap()
     }
 
     fn windows_driver(ver: &str) -> Driver {
@@ -457,5 +461,26 @@ mod tests {
         );
         assert_eq!(out.severity, CompatSeverity::Ok);
         assert!(out.ok);
+    }
+
+    #[test]
+    fn pair_cudnn_matches_real_patch_versions_by_line() {
+        // The matrix lists line representatives (8.9.7 / 9.23.0); a real
+        // registry listing carries arbitrary patches like 9.8.0.
+        let eng = DefaultCompatEngine::new();
+        let avail = vec![v("8.9.7"), v("9.8.0")];
+        assert_eq!(eng.pair_cudnn(&v("12.4.1"), &avail), Some(v("9.8.0")));
+        assert_eq!(eng.pair_cudnn(&v("13.0.1"), &avail), Some(v("9.8.0")));
+        assert_eq!(eng.pair_cudnn(&v("11.8.0"), &avail), Some(v("8.9.7")));
+    }
+
+    #[test]
+    fn validate_pair_accepts_any_patch_on_a_supported_line() {
+        let eng = DefaultCompatEngine::new();
+        assert!(eng.validate_pair(&v("12.4.1"), &v("9.8.0")).ok);
+        assert!(eng.validate_pair(&v("12.4.1"), &v("8.9.2")).ok);
+        let bad = eng.validate_pair(&v("13.0.1"), &v("8.9.7"));
+        assert!(!bad.ok);
+        assert_eq!(bad.severity, CompatSeverity::Block);
     }
 }

@@ -2,6 +2,7 @@
 
 pub mod adopt;
 pub mod alias;
+pub mod cudnn;
 pub mod current;
 pub mod default;
 pub mod doctor;
@@ -159,8 +160,10 @@ pub enum Command {
         output_format: OutputFormat,
     },
     /// List toolkit versions available in the remote registry (alias for `ls --only-downloads`).
+    ///
+    /// With `--cudnn`, lists cuDNN redist versions instead.
     LsRemote {
-        /// List cuDNN versions instead (M2: parsed but a no-op; listing lands in M3).
+        /// List cuDNN versions from the cuDNN redist instead of toolkits.
         #[arg(long)]
         cudnn: bool,
     },
@@ -172,15 +175,24 @@ pub enum Command {
         /// Reinstall even if the version is already installed (replaces the existing install; verified cached downloads are reused).
         #[arg(long, short = 'r')]
         reinstall: bool,
-        /// Pair a specific cuDNN version (M2: parsed but a no-op; pairing lands in M3).
+        /// Pair this specific cuDNN version instead of the matrix default.
         #[arg(long)]
         cudnn: Option<String>,
-        /// Skip cuDNN pairing (M2: parsed but a no-op; pairing lands in M3).
+        /// Skip cuDNN pairing for this install.
         #[arg(long, conflicts_with = "cudnn")]
         no_cudnn: bool,
+        /// Accept the NVIDIA cuDNN EULA non-interactively (recorded once
+        /// under `~/.cuvm/eula/`).
+        #[arg(long)]
+        accept_eula: bool,
         /// Install even if the toolkit exceeds the driver ceiling.
         #[arg(long)]
         force: bool,
+    },
+    /// Manage cuDNN payloads paired with installed toolkits.
+    Cudnn {
+        #[command(subcommand)]
+        command: CudnnCommand,
     },
     /// Print the currently active bundle handle.
     Current,
@@ -223,6 +235,27 @@ pub enum Command {
         #[arg(long, value_enum)]
         os: Option<OsArg>,
     },
+}
+
+/// `cuvm cudnn <...>` (spec §7).
+#[derive(Debug, Subcommand)]
+pub enum CudnnCommand {
+    /// Download a cuDNN (or ingest a local redist archive) and link it into
+    /// an installed toolkit.
+    Install {
+        /// Version spec (`9.8`, `9.8.0`, `latest`) or a path to a local
+        /// `cudnn-<platform>-<ver>_cuda<major>-archive.{tar.xz,zip}`.
+        what: String,
+        /// Installed toolkit to pair with (e.g. `12.4.1`, or `12.4`).
+        #[arg(long = "for", value_name = "TOOLKIT")]
+        for_toolkit: String,
+        /// Accept the NVIDIA cuDNN EULA non-interactively (recorded once
+        /// under `~/.cuvm/eula/`).
+        #[arg(long)]
+        accept_eula: bool,
+    },
+    /// List cuDNN payloads in the content store and their toolkits.
+    Ls,
 }
 
 impl Command {
@@ -272,28 +305,33 @@ impl Command {
                 )?;
                 Ok(0)
             }
-            Command::LsRemote { cudnn: _ } => {
+            Command::LsRemote { cudnn } => {
                 let registry = build_registry();
-                list::run_list(
-                    deps,
-                    registry.as_ref(),
-                    &list::ListOpts {
-                        spec: None,
-                        only_installed: false,
-                        only_downloads: true,
-                        all_versions: false,
-                        show_urls: false,
-                        refresh: false,
-                        json: false,
-                    },
-                )?;
+                if cudnn {
+                    list::run_list_cudnn_remote(registry.as_ref())?;
+                } else {
+                    list::run_list(
+                        deps,
+                        registry.as_ref(),
+                        &list::ListOpts {
+                            spec: None,
+                            only_installed: false,
+                            only_downloads: true,
+                            all_versions: false,
+                            show_urls: false,
+                            refresh: false,
+                            json: false,
+                        },
+                    )?;
+                }
                 Ok(0)
             }
             Command::Install {
                 specs,
                 reinstall,
-                cudnn: _,
-                no_cudnn: _,
+                cudnn,
+                no_cudnn,
+                accept_eula,
                 force,
             } => {
                 let registry = build_registry();
@@ -308,9 +346,36 @@ impl Command {
                     &specs,
                     reinstall,
                     force,
+                    &install::CudnnOpts {
+                        explicit: cudnn,
+                        skip: no_cudnn,
+                        accept_eula,
+                    },
                 )?;
                 Ok(code)
             }
+            Command::Cudnn { command } => match command {
+                CudnnCommand::Install {
+                    what,
+                    for_toolkit,
+                    accept_eula,
+                } => {
+                    let registry = build_registry();
+                    cudnn::run_cudnn_install(
+                        registry.as_ref(),
+                        deps.compat.as_ref(),
+                        deps.inventory.as_ref(),
+                        &deps.home,
+                        &what,
+                        &for_toolkit,
+                        accept_eula,
+                    )
+                }
+                CudnnCommand::Ls => {
+                    cudnn::run_cudnn_ls(deps.inventory.as_ref(), &deps.home)?;
+                    Ok(0)
+                }
+            },
             Command::Current => {
                 current::run(deps)?;
                 Ok(0)
@@ -380,12 +445,13 @@ fn build_installer() -> Box<dyn cuvm_app::Installer> {
     cuvm_platform::new_installer(cuvm_core::Os::Linux)
 }
 
-/// Build the registry client, honouring `CUVM_REGISTRY_URL` (tests/CI) over the
-/// NVIDIA default. The composition root is the only place that knows the concrete
-/// `DefaultRegistryClient`.
+/// Build the registry client, honouring `CUVM_REGISTRY_URL` and
+/// `CUVM_CUDNN_REGISTRY_URL` (tests/CI) over the NVIDIA defaults. The composition
+/// root is the only place that knows the concrete `DefaultRegistryClient`.
 fn build_registry() -> Box<dyn cuvm_app::RegistryClient> {
-    Box::new(cuvm_registry::DefaultRegistryClient::with_base_url(
+    Box::new(cuvm_registry::DefaultRegistryClient::with_base_urls(
         crate::composition::registry_base_url(),
+        crate::composition::cudnn_registry_base_url(),
     ))
 }
 

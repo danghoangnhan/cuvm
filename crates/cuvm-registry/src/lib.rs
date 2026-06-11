@@ -32,6 +32,16 @@ pub enum RegistryError {
         platform: String,
     },
 
+    /// The platform exists in the cuDNN manifest but has no build for the
+    /// requested CUDA major (e.g. cuDNN 8.9.7 ships no `cuda13` variant).
+    #[error("platform `{platform}` has no `{variant}` build in this cuDNN manifest")]
+    MissingCudaVariant {
+        /// The redist platform key that was looked up (e.g. `windows-x86_64`).
+        platform: String,
+        /// The `cuda<major>` variant key that was absent (e.g. `cuda13`).
+        variant: String,
+    },
+
     /// None of the recommended/requested components were present in the manifest.
     #[error("no usable components found for this toolkit (wanted: {wanted})")]
     NoComponents {
@@ -51,6 +61,47 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+/// NVIDIA manifests have flipped `size` between JSON number and string across
+/// products and eras (see commit 0774819); both `de_size` and `de_size_opt`
+/// accept either representation via this untagged shape.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SizeRepr {
+    Num(u64),
+    Text(String),
+}
+
+impl SizeRepr {
+    /// Collapse to bytes; an unparseable string is a real error, never 0.
+    fn into_u64<E: serde::de::Error>(self) -> Result<u64, E> {
+        match self {
+            SizeRepr::Num(n) => Ok(n),
+            SizeRepr::Text(s) => s.trim().parse().map_err(serde::de::Error::custom),
+        }
+    }
+}
+
+/// NVIDIA redist manifests serialize `size` as a JSON string in production
+/// (`"size": "1099680"`); accept both string and number.
+fn de_size<'de, D>(de: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    SizeRepr::deserialize(de)?.into_u64()
+}
+
+/// Optional variant of [`de_size`]: absent/`null` stays `None`; present values
+/// accept both string and number. A present-but-unparseable string is a real
+/// error (matching `de_size`'s posture), not a silent `None`.
+fn de_size_opt<'de, D>(de: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<SizeRepr>::deserialize(de)?
+        .map(SizeRepr::into_u64)
+        .transpose()
+}
+
 /// One redist platform object — mirrors a single `{relative_path, sha256, md5?, size}`
 /// entry under a component. `md5` is optional (some components omit it).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -63,6 +114,7 @@ pub struct RedistArtifact {
     #[serde(default)]
     pub md5: Option<String>,
     /// Compressed artifact size in bytes.
+    #[serde(deserialize_with = "de_size")]
     pub size: u64,
 }
 
@@ -128,6 +180,115 @@ impl RedistManifest {
     }
 }
 
+/// One artifact under a cuDNN platform's `cuda<major>` variant key.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct CudnnVariantArtifact {
+    /// Path under the cuDNN redist base URL, copied verbatim.
+    pub relative_path: String,
+    /// Hex SHA-256 from the manifest; always verified before use.
+    pub sha256: String,
+    /// Optional hex MD5 from the manifest.
+    #[serde(default)]
+    pub md5: Option<String>,
+    /// Payload size in bytes; tolerant of the string/number representation
+    /// flip (same hazard class as `de_size` — see commit 0774819).
+    #[serde(default, deserialize_with = "de_size_opt")]
+    pub size: Option<u64>,
+}
+
+impl CudnnVariantArtifact {
+    /// Size in bytes, 0 when the manifest omits it (only progress totals
+    /// consume it, and those come from Content-Length anyway).
+    #[must_use]
+    pub fn size_bytes(&self) -> u64 {
+        self.size.unwrap_or(0)
+    }
+}
+
+/// The `cudnn` product out of a per-product cuDNN redist manifest
+/// (`redistrib_<label>.json` at the cuDNN base). Platform values nest one
+/// level deeper than toolkit manifests: platform key -> `cuda<major>` -> artifact.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CudnnManifest {
+    /// The product's own 4-field version (e.g. `9.23.0.39`); the index label
+    /// (`9.23.0`) is what cuvm uses as the user-facing handle.
+    pub product_version: Option<String>,
+    platforms: BTreeMap<String, BTreeMap<String, CudnnVariantArtifact>>,
+}
+
+impl CudnnManifest {
+    /// Parse a cuDNN redist manifest, keeping only the `cudnn` product.
+    ///
+    /// # Errors
+    /// [`RegistryError::Parse`] when the document is not JSON or has no
+    /// `cudnn` product object.
+    pub fn parse(json: &str) -> RegistryResult<Self> {
+        #[derive(Deserialize)]
+        struct Doc {
+            cudnn: Option<RawProduct>,
+        }
+        #[derive(Deserialize)]
+        struct RawProduct {
+            #[serde(default)]
+            version: Option<String>,
+            #[serde(flatten)]
+            rest: BTreeMap<String, serde_json::Value>,
+        }
+
+        let doc: Doc =
+            serde_json::from_str(json).map_err(|e| RegistryError::Parse(e.to_string()))?;
+        let product = doc
+            .cudnn
+            .ok_or_else(|| RegistryError::Parse("manifest has no `cudnn` product".into()))?;
+
+        // Platform keys are the entries whose value is a map of
+        // `cuda<major>` -> artifact; metadata keys (name/license/cuda_variant)
+        // fail that shape and are skipped.
+        let platforms = product
+            .rest
+            .into_iter()
+            .filter_map(|(key, value)| {
+                let variants: BTreeMap<String, CudnnVariantArtifact> =
+                    serde_json::from_value(value).ok()?;
+                (!variants.is_empty() && variants.keys().all(|k| k.starts_with("cuda")))
+                    .then_some((key, variants))
+            })
+            .collect();
+
+        Ok(CudnnManifest {
+            product_version: product.version,
+            platforms,
+        })
+    }
+
+    /// The artifact for `platform_key` (e.g. `linux-x86_64`) and CUDA major.
+    ///
+    /// # Errors
+    /// [`RegistryError::MissingPlatform`] when the platform has no builds at
+    /// all; [`RegistryError::MissingCudaVariant`] when it exists but lacks the
+    /// `cuda<major>` variant.
+    pub fn artifact(
+        &self,
+        platform_key: &str,
+        cuda_major: u32,
+    ) -> RegistryResult<&CudnnVariantArtifact> {
+        let variants =
+            self.platforms
+                .get(platform_key)
+                .ok_or_else(|| RegistryError::MissingPlatform {
+                    component: "cudnn".into(),
+                    platform: platform_key.into(),
+                })?;
+        let variant = format!("cuda{cuda_major}");
+        variants
+            .get(&variant)
+            .ok_or_else(|| RegistryError::MissingCudaVariant {
+                platform: platform_key.into(),
+                variant,
+            })
+    }
+}
+
 /// The minimal usable component set for a CUDA `major`, filtered to what is actually
 /// present in the parsed manifest (so missing components are dropped, never invented).
 ///
@@ -172,12 +333,16 @@ use cuvm_core::{Platform, Version};
 /// The production CUDA redist base URL (trailing slash required).
 const DEFAULT_BASE_URL: &str = "https://developer.download.nvidia.com/compute/cuda/redist/";
 
+/// NVIDIA's account-free cuDNN redistributables index (spec §2.3).
+const DEFAULT_CUDNN_BASE_URL: &str = "https://developer.download.nvidia.com/compute/cudnn/redist/";
+
 /// Default `cuvm_app::RegistryClient`: scrapes the redist index and resolves
 /// `redistrib_<ver>.json` manifests into `Artifact`s. All HTTP goes through
 /// `cuvm_download::http_get`.
 #[derive(Debug, Clone)]
 pub struct DefaultRegistryClient {
     base_url: String,
+    cudnn_base_url: String,
 }
 
 impl Default for DefaultRegistryClient {
@@ -186,31 +351,80 @@ impl Default for DefaultRegistryClient {
     }
 }
 
+/// Enforce the trailing `/` every base URL needs: artifact URLs are formed as
+/// `base + relative_path`.
+fn with_trailing_slash(url: String) -> String {
+    if url.ends_with('/') {
+        url
+    } else {
+        format!("{url}/")
+    }
+}
+
 impl DefaultRegistryClient {
-    /// Build a client pointed at the production redist base URL.
+    /// Production NVIDIA endpoints for both products.
     #[must_use]
     pub fn new() -> Self {
         Self {
             base_url: DEFAULT_BASE_URL.to_string(),
+            cudnn_base_url: DEFAULT_CUDNN_BASE_URL.to_string(),
         }
     }
 
-    /// Build a client pointed at a custom base URL (a trailing `/` is enforced).
-    /// Tests point this at an `httpmock` server.
+    /// Override the CUDA toolkit base only (cuDNN keeps the production
+    /// default). Trailing slash enforced: artifact URLs are `base + relative_path`.
     #[must_use]
     pub fn with_base_url(url: String) -> Self {
-        let base_url = if url.ends_with('/') {
-            url
-        } else {
-            format!("{url}/")
-        };
-        Self { base_url }
+        Self {
+            base_url: with_trailing_slash(url),
+            ..Self::new()
+        }
+    }
+
+    /// Override both product bases (tests point each at a mock).
+    #[must_use]
+    pub fn with_base_urls(cuda: String, cudnn: String) -> Self {
+        Self {
+            base_url: with_trailing_slash(cuda),
+            cudnn_base_url: with_trailing_slash(cudnn),
+        }
+    }
+
+    /// The CUDA toolkit redist base URL (always trailing-slash terminated).
+    #[must_use]
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// The cuDNN redist base URL (always trailing-slash terminated).
+    #[must_use]
+    pub fn cudnn_base_url(&self) -> &str {
+        &self.cudnn_base_url
     }
 
     /// Fetch a URL as UTF-8 text via `cuvm_download::http_get`.
     fn get_text(url: &str) -> RegistryResult<String> {
         let bytes = cuvm_download::http_get(url).map_err(|e| RegistryError::Http(e.to_string()))?;
         String::from_utf8(bytes).map_err(|e| RegistryError::Http(e.to_string()))
+    }
+
+    /// Scrape `redistrib_<ver>.json` links at `index_url` into sorted, deduped
+    /// versions. Shared body of `list_toolkits`/`list_cudnn` — the two
+    /// products differ only in which index URL they scrape.
+    fn list_versions_at(index_url: &str) -> RegistryResult<Vec<Version>> {
+        let html = Self::get_text(index_url)?;
+        let mut versions: Vec<Version> = scrape_redistrib_versions(&html)
+            .into_iter()
+            .filter_map(|s| Version::parse(&s).ok())
+            .collect();
+        if versions.is_empty() {
+            return Err(RegistryError::EmptyIndex {
+                url: index_url.to_string(),
+            });
+        }
+        versions.sort();
+        versions.dedup();
+        Ok(versions)
     }
 }
 
@@ -246,23 +460,15 @@ fn scrape_redistrib_versions(html: &str) -> Vec<String> {
 impl cuvm_app::RegistryClient for DefaultRegistryClient {
     fn list_toolkits(&self, _p: &Platform) -> anyhow::Result<Vec<Version>> {
         // NVIDIA serves the redist directory listing at the base URL itself.
-        let index_url = self.base_url.clone();
-        let html = Self::get_text(&index_url)?;
-        let mut versions: Vec<Version> = scrape_redistrib_versions(&html)
-            .into_iter()
-            .filter_map(|s| Version::parse(&s).ok())
-            .collect();
-        if versions.is_empty() {
-            return Err(RegistryError::EmptyIndex { url: index_url }.into());
-        }
-        versions.sort();
-        versions.dedup();
-        Ok(versions)
+        Self::list_versions_at(&self.base_url).map_err(Into::into)
     }
 
+    /// Versions named by the cuDNN redist index, ascending. Like
+    /// `list_toolkits`, this is index-only: the index is platform-agnostic, so
+    /// `_p`/`_major` are accepted for the port shape but not used as filters —
+    /// platform/variant gaps surface at `resolve_cudnn` (D4).
     fn list_cudnn(&self, _p: &Platform, _major: u32) -> anyhow::Result<Vec<Version>> {
-        // cuDNN registry listing lands in M3; M2 install path does not call this.
-        anyhow::bail!("list_cudnn is not implemented in M2")
+        Self::list_versions_at(&self.cudnn_base_url).map_err(Into::into)
     }
 
     fn resolve_toolkit(
@@ -276,13 +482,24 @@ impl cuvm_app::RegistryClient for DefaultRegistryClient {
         self.resolve_toolkit_impl(v, *p, want).map_err(Into::into)
     }
 
+    /// The single `cudnn` artifact for this version/platform/CUDA-major.
     fn resolve_cudnn(
         &self,
-        _v: &Version,
-        _p: &Platform,
-        _major: u32,
+        v: &Version,
+        p: &Platform,
+        major: u32,
     ) -> anyhow::Result<Vec<cuvm_app::Artifact>> {
-        anyhow::bail!("resolve_cudnn is not implemented in M2")
+        let manifest_url = format!("{}redistrib_{}.json", self.cudnn_base_url, v.raw);
+        let manifest = CudnnManifest::parse(&Self::get_text(&manifest_url)?)?;
+        let art = manifest.artifact(&p.redist_key(), major)?;
+        Ok(vec![cuvm_app::Artifact {
+            component: "cudnn".to_string(),
+            relative_path: art.relative_path.clone(),
+            url: format!("{}{}", self.cudnn_base_url, art.relative_path),
+            sha256: art.sha256.clone(),
+            md5: art.md5.clone(),
+            size: art.size_bytes(),
+        }])
     }
 }
 
@@ -367,6 +584,22 @@ mod tests {
         };
         assert!(err.to_string().contains("no redistrib_<ver>.json links"));
         assert!(err.to_string().contains("https://example.invalid/redist/"));
+    }
+
+    #[test]
+    fn base_urls_are_normalized_with_trailing_slashes() {
+        let c = DefaultRegistryClient::with_base_urls(
+            "http://cuda.example/redist".into(),
+            "http://cudnn.example/redist".into(),
+        );
+        assert_eq!(c.base_url(), "http://cuda.example/redist/");
+        assert_eq!(c.cudnn_base_url(), "http://cudnn.example/redist/");
+        // with_base_url keeps the production cuDNN default.
+        let d = DefaultRegistryClient::with_base_url("http://cuda.example/".into());
+        assert_eq!(
+            d.cudnn_base_url(),
+            "https://developer.download.nvidia.com/compute/cudnn/redist/"
+        );
     }
 }
 
@@ -497,6 +730,176 @@ mod manifest_tests {
         versions.sort();
         versions.dedup();
         assert_eq!(versions.len(), 1, "13.3 and 13.3.0 must collapse to one");
+    }
+
+    #[test]
+    fn parse_accepts_string_sizes_like_the_production_redist() {
+        // Real NVIDIA manifests serialize size as a JSON string
+        // ("size": "1099680"); only our fixtures used numbers.
+        let json = r#"{
+            "release_date": "2024-03-01",
+            "cuda_cudart": {
+                "name": "CUDA Runtime",
+                "version": "12.4.131",
+                "linux-x86_64": {
+                    "relative_path": "cuda_cudart/linux-x86_64/a.tar.xz",
+                    "sha256": "ab",
+                    "md5": "cd",
+                    "size": "1099680"
+                }
+            }
+        }"#;
+        let m = RedistManifest::parse(json).expect("string sizes must parse");
+        let art = m.component("cuda_cudart").unwrap().platforms["linux-x86_64"].clone();
+        assert_eq!(art.size, 1_099_680);
+    }
+}
+
+#[cfg(test)]
+mod cudnn_manifest_tests {
+    use super::*;
+
+    /// Mirrors the live `redistrib_9.23.0.json` shape (per-product, nested
+    /// cuda-variant platform maps, string sizes, 4-field product version).
+    const CUDNN_9230: &str = r#"{
+        "release_date": "2026-05-29",
+        "release_label": "9.23.0",
+        "release_product": "cudnn",
+        "cudnn": {
+            "name": "NVIDIA CUDA Deep Neural Network library",
+            "license": "cudnn",
+            "license_path": "cudnn/LICENSE.txt",
+            "version": "9.23.0.39",
+            "cuda_variant": ["12", "13"],
+            "linux-x86_64": {
+                "cuda12": {
+                    "relative_path": "cudnn/linux-x86_64/cudnn-linux-x86_64-9.23.0.39_cuda12-archive.tar.xz",
+                    "sha256": "7d2c",
+                    "md5": "f33b",
+                    "size": "967524328"
+                },
+                "cuda13": {
+                    "relative_path": "cudnn/linux-x86_64/cudnn-linux-x86_64-9.23.0.39_cuda13-archive.tar.xz",
+                    "sha256": "69eb",
+                    "md5": "c12d",
+                    "size": "897413624"
+                }
+            },
+            "windows-x86_64": {
+                "cuda12": {
+                    "relative_path": "cudnn/windows-x86_64/cudnn-windows-x86_64-9.23.0.39_cuda12-archive.zip",
+                    "sha256": "495f",
+                    "md5": "57cd",
+                    "size": "1817976536"
+                }
+            }
+        },
+        "cudnn_jit": {
+            "name": "NVIDIA CUDA Deep Neural Network Graph JIT library",
+            "license": "cudnn",
+            "version": "9.23.0.39"
+        }
+    }"#;
+
+    #[test]
+    fn parse_extracts_the_cudnn_product_and_nested_variants() {
+        let m = CudnnManifest::parse(CUDNN_9230).expect("parses");
+        assert_eq!(m.product_version.as_deref(), Some("9.23.0.39"));
+        // Metadata keys (name/license/license_path/cuda_variant) must not be
+        // mistaken for platforms; only the two real platform maps survive.
+        assert_eq!(m.platforms.len(), 2);
+        let art = m.artifact("linux-x86_64", 12).expect("cuda12 build exists");
+        assert!(art.relative_path.ends_with("_cuda12-archive.tar.xz"));
+        assert_eq!(art.sha256, "7d2c");
+        assert_eq!(art.size_bytes(), 967_524_328);
+    }
+
+    /// Mirrors the 8.x-era shape (`redistrib_8.9.7.json`): 3-field release
+    /// label, ppc64le builds with `cuda11` variants, a `cudnn_samples`
+    /// sibling product, and both size hazards (numeric size, absent size).
+    const CUDNN_897: &str = r#"{
+        "release_date": "2023-12-05",
+        "release_label": "8.9.7",
+        "release_product": "cudnn",
+        "cudnn": {
+            "name": "NVIDIA CUDA Deep Neural Network library",
+            "license": "cudnn",
+            "version": "8.9.7.29",
+            "cuda_variant": ["11", "12"],
+            "linux-ppc64le": {
+                "cuda11": {
+                    "relative_path": "cudnn/linux-ppc64le/cudnn-linux-ppc64le-8.9.7.29_cuda11-archive.tar.xz",
+                    "sha256": "aa11",
+                    "size": 12345
+                },
+                "cuda12": {
+                    "relative_path": "cudnn/linux-ppc64le/cudnn-linux-ppc64le-8.9.7.29_cuda12-archive.tar.xz",
+                    "sha256": "bb22"
+                }
+            },
+            "linux-x86_64": {
+                "cuda11": {
+                    "relative_path": "cudnn/linux-x86_64/cudnn-linux-x86_64-8.9.7.29_cuda11-archive.tar.xz",
+                    "sha256": "cc33",
+                    "size": "843423789"
+                }
+            }
+        },
+        "cudnn_samples": {
+            "name": "NVIDIA cuDNN samples",
+            "license": "cudnn",
+            "version": "8.9.7.29",
+            "linux-x86_64": {
+                "cuda11": {
+                    "relative_path": "cudnn/linux-x86_64/cudnn_samples-linux-x86_64-8.9.7.29_cuda11-archive.tar.xz",
+                    "sha256": "dd44",
+                    "size": "1234"
+                }
+            }
+        }
+    }"#;
+
+    #[test]
+    fn eight_x_manifest_resolves_ppc64le_and_tolerates_numeric_or_absent_size() {
+        let m = CudnnManifest::parse(CUDNN_897).expect("8.x manifest parses");
+        assert_eq!(m.product_version.as_deref(), Some("8.9.7.29"));
+        assert_eq!(
+            m.platforms.len(),
+            2,
+            "`cudnn_samples` sibling product must not leak into platforms"
+        );
+        // A numeric `size` must not poison the whole platform (the
+        // filter_map in `parse` would surface it as MissingPlatform).
+        let art = m
+            .artifact("linux-ppc64le", 11)
+            .expect("cuda11 ppc64le build exists");
+        assert!(art.relative_path.ends_with("_cuda11-archive.tar.xz"));
+        assert_eq!(art.size, Some(12_345), "numeric size must parse");
+        assert_eq!(art.size_bytes(), 12_345);
+        let no_size = m
+            .artifact("linux-ppc64le", 12)
+            .expect("cuda12 build exists");
+        assert_eq!(no_size.size, None);
+        assert_eq!(no_size.size_bytes(), 0, "absent size defaults to 0");
+    }
+
+    #[test]
+    fn missing_platform_and_missing_variant_are_distinct_errors() {
+        let m = CudnnManifest::parse(CUDNN_9230).unwrap();
+        let e1 = m.artifact("linux-sbsa", 12).unwrap_err();
+        assert!(matches!(e1, RegistryError::MissingPlatform { .. }), "{e1}");
+        let e2 = m.artifact("windows-x86_64", 13).unwrap_err();
+        assert!(
+            matches!(e2, RegistryError::MissingCudaVariant { .. }),
+            "{e2}"
+        );
+        assert!(e2.to_string().contains("cuda13"), "{e2}");
+    }
+
+    #[test]
+    fn manifest_without_a_cudnn_product_is_a_parse_error() {
+        let err = CudnnManifest::parse(r#"{"release_label": "9.9.9"}"#).unwrap_err();
+        assert!(matches!(err, RegistryError::Parse(_)), "{err}");
     }
 }
 

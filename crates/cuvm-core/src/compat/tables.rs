@@ -122,10 +122,14 @@ impl CudnnMatrix {
         CudnnMatrix { entries }
     }
 
-    /// Find the matrix entry for an exact cuDNN version (e.g. `9.23.0`).
+    /// Find the matrix line covering this cuDNN version, matched by MAJOR —
+    /// entries are line representatives (`9.23.0` stands for all 9.x), so an
+    /// arbitrary downloaded patch like `9.8.0` resolves to the 9.x line.
     #[must_use]
-    pub fn entry_for(&self, cudnn: &Version) -> Option<&CudnnEntry> {
-        self.entries.iter().find(|e| e.cudnn == *cudnn)
+    pub fn line_for(&self, cudnn: &Version) -> Option<&CudnnEntry> {
+        self.entries
+            .iter()
+            .find(|e| e.cudnn.major() == cudnn.major())
     }
 
     /// All cuDNN line representatives whose support set includes this CUDA major.
@@ -200,9 +204,10 @@ mod tests {
     fn cudnn_matrix_loads_both_lines() {
         let m = CudnnMatrix::load();
         assert_eq!(m.entries.len(), 2);
-        let last8 = m.entry_for(&Version::parse("8.9.7").unwrap()).unwrap();
+        // line_for matches by major, so arbitrary patches resolve to a line.
+        let last8 = m.line_for(&Version::parse("8.9.2").unwrap()).unwrap();
         assert_eq!(last8.cuda_majors, vec![11, 12]);
-        let nine = m.entry_for(&Version::parse("9.23.0").unwrap()).unwrap();
+        let nine = m.line_for(&Version::parse("9.8.0").unwrap()).unwrap();
         assert_eq!(nine.cuda_majors, vec![12, 13]);
     }
 

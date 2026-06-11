@@ -3,6 +3,7 @@
 //! WU-1: stub backends returning `NotImplemented`. Real syscalls (registry,
 //! junction, broadcast, symlink) arrive behind `#[cfg]` in WU-5/WU-9/WU-13/WU-14.
 
+pub mod cudnn_link;
 pub mod unix;
 pub mod windows;
 

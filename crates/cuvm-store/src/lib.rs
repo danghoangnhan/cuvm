@@ -3,7 +3,9 @@
 #![forbid(unsafe_code)]
 
 pub mod atomic;
+pub mod cudnn_store;
 pub mod error;
+pub mod eula;
 pub mod inventory;
 pub mod layout;
 pub mod manifest_io;
