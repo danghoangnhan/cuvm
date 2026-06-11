@@ -28,14 +28,15 @@ pub fn cudnn_eula_path(layout: &Layout) -> PathBuf {
     layout.eula_dir().join("cudnn.json")
 }
 
-/// Has the cuDNN EULA been acknowledged on this machine?
+/// Has the cuDNN EULA been acknowledged on this machine? The file's presence
+/// alone is the record; its content is informational.
 #[must_use]
 pub fn cudnn_accepted(layout: &Layout) -> bool {
     cudnn_eula_path(layout).is_file()
 }
 
-/// Record the acceptance moment (idempotent; clock injected — store modules
-/// never read the wall clock themselves).
+/// Record the acceptance moment (re-recording overwrites the prior record;
+/// clock injected — store modules never read the wall clock themselves).
 ///
 /// # Errors
 /// [`crate::StoreError::Io`] when the record cannot be written.

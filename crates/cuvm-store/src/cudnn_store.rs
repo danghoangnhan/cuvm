@@ -45,8 +45,9 @@ pub fn store_path(layout: &Layout, sha256: &str) -> PathBuf {
 /// Atomically publish a staged, wrapper-stripped cuDNN tree into the
 /// content-addressed store. Idempotent: an existing payload for the same hash
 /// wins and the duplicate staging dir is removed (content-addressed ⇒ same
-/// bytes). Same never-partial posture as toolkit `place`: rename within the
-/// same filesystem (staging dirs live under `cudnn/`).
+/// bytes). Same never-partial posture as toolkit `place`: the atomicity rests
+/// on `rename` staying within one filesystem, and that is the caller's
+/// obligation — staging dirs must live under `cudnn/`.
 ///
 /// # Errors
 /// [`crate::StoreError::Io`] on filesystem failures.
@@ -63,7 +64,16 @@ pub fn place_staged(layout: &Layout, sha256: &str, staged: &Path) -> Result<Path
         return Ok(dst);
     }
     std::fs::create_dir_all(layout.cudnn_dir()).map_err(io(&layout.cudnn_dir()))?;
-    std::fs::rename(staged, &dst).map_err(io(&dst))?;
+    if let Err(err) = std::fs::rename(staged, &dst) {
+        // Lost a benign race: a concurrent placement published the same
+        // content-addressed payload between our existence check and the
+        // rename. Treat it as the idempotent-success path above.
+        if dst.is_dir() {
+            std::fs::remove_dir_all(staged).map_err(io(staged))?;
+            return Ok(dst);
+        }
+        return Err(io(&dst)(err));
+    }
     Ok(dst)
 }
 
@@ -153,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn lib_names_collects_cudnn_entries_sorted() {
+    fn lib_names_collects_cudnn_entries_sorted_and_deduped() {
         let home = tempfile::tempdir().unwrap();
         let store = home.path().join("s");
         for f in [
@@ -161,6 +171,8 @@ mod tests {
             "lib/libcudnn.so",
             "lib/README",
             "bin/cudnn64_9.dll",
+            // Same name in both lib/ and bin/: recorded once.
+            "bin/libcudnn.so",
         ] {
             let p = store.join(f);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -170,5 +182,16 @@ mod tests {
             lib_names(&store),
             ["cudnn64_9.dll", "libcudnn.so", "libcudnn_ops.so"]
         );
+    }
+
+    #[test]
+    fn lib_names_handles_a_lib_only_tree() {
+        // The universal Linux shape: lib/ only, no bin/ — the missing
+        // directory is skipped, not an error.
+        let home = tempfile::tempdir().unwrap();
+        let store = home.path().join("s");
+        std::fs::create_dir_all(store.join("lib")).unwrap();
+        std::fs::write(store.join("lib/libcudnn.so.9"), b"x").unwrap();
+        assert_eq!(lib_names(&store), ["libcudnn.so.9"]);
     }
 }

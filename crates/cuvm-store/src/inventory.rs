@@ -41,6 +41,8 @@ impl FsInventory {
             checksum: rec.sha256.clone(),
         };
         Ok(Bundle {
+            // Hydrated first: this closure borrows `toolkit.root`, and the
+            // `toolkit` field below moves `toolkit` into the Bundle.
             cudnn: rec.cudnn.as_ref().and_then(|_| {
                 let meta = crate::cudnn_store::read_cudnn_meta(&toolkit.root)?;
                 let version = Version::parse(&meta.version).ok()?;
@@ -48,7 +50,7 @@ impl FsInventory {
                     version,
                     cuda_major: meta.cuda_major,
                     source: meta.source,
-                    store: self.layout.cudnn_dir().join(&meta.sha256),
+                    store: crate::cudnn_store::store_path(&self.layout, &meta.sha256),
                     sha256: meta.sha256,
                     libs: meta.libs,
                 })
