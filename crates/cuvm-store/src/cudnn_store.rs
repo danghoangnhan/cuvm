@@ -77,22 +77,41 @@ pub fn place_staged(layout: &Layout, sha256: &str, staged: &Path) -> Result<Path
     Ok(dst)
 }
 
-/// File names of the cuDNN payload's linkable artifacts (`lib/` + `bin/`
-/// entries whose name contains `cudnn`), sorted — recorded as `Cudnn.libs`
-/// ("full `libcudnn*` set", spec §2.3).
+/// File names of the cuDNN payload's linkable artifacts (`cudnn`-named FILES
+/// under `lib/` + `bin/`, at any depth), sorted — recorded as `Cudnn.libs`
+/// ("full `libcudnn*` set", spec §2.3). Mirrors the linker's file-level
+/// selection (`cudnn_link::link_named`) exactly — counting only files and
+/// recursing into nested dirs like Windows `lib/x64/` — so the CLI's pre-link
+/// emptiness guard and the post-link `libs` result can never disagree.
 #[must_use]
 pub fn lib_names(store: &Path) -> Vec<String> {
-    let mut names: Vec<String> = ["lib", "bin"]
-        .iter()
-        .filter_map(|sub| std::fs::read_dir(store.join(sub)).ok())
-        .flatten()
-        .filter_map(std::result::Result::ok)
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.contains("cudnn"))
-        .collect();
+    let mut names: Vec<String> = Vec::new();
+    for sub in ["lib", "bin"] {
+        collect_lib_files(&store.join(sub), &mut names);
+    }
     names.sort();
     names.dedup();
     names
+}
+
+/// Recursively collect `cudnn`-named file names under `dir` (directories are
+/// walked, never counted). Missing dirs are skipped.
+fn collect_lib_files(dir: &Path, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_lib_files(&path, out);
+            continue;
+        }
+        if let Ok(name) = entry.file_name().into_string() {
+            if name.contains("cudnn") {
+                out.push(name);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -182,6 +201,25 @@ mod tests {
             lib_names(&store),
             ["cudnn64_9.dll", "libcudnn.so", "libcudnn_ops.so"]
         );
+    }
+
+    #[test]
+    fn lib_names_counts_nested_files_not_directories() {
+        // Aligns with link_named: a cudnn-NAMED directory is not a lib (only its
+        // files are), and Windows-style nested lib/x64 files are picked up. This
+        // is the property the CLI's pre-link guard relies on.
+        let home = tempfile::tempdir().unwrap();
+        let store = home.path().join("s");
+        for f in [
+            "lib/cudnn_engines_precompiled/data.bin",
+            "lib/x64/cudnn.lib",
+        ] {
+            let p = store.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"x").unwrap();
+        }
+        // data.bin is not cudnn-named; the cudnn-named dir itself is not counted.
+        assert_eq!(lib_names(&store), ["cudnn.lib"]);
     }
 
     #[test]

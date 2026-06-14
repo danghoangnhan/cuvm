@@ -154,10 +154,11 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
 /// Returns an error if the cuDNN redist index cannot be fetched.
 pub fn run_list_cudnn_remote(registry: &dyn RegistryClient, spec: Option<&str>) -> Result<()> {
     let platform = current_platform();
-    let mut versions = registry
+    let versions = registry
         // 0 = no CUDA-major filter — the cuDNN index is platform/major-agnostic (D4).
         .list_cudnn(&platform, 0)
         .context("fetching the cuDNN redist index")?;
+    let mut versions = collapse_cudnn_lines(versions);
     if let Some(spec) = spec {
         versions.retain(|v| spec_matches(spec, v));
     }
@@ -166,6 +167,33 @@ pub fn run_list_cudnn_remote(registry: &dyn RegistryClient, spec: Option<&str>) 
         println!("{}", v.raw);
     }
     Ok(())
+}
+
+/// The cuDNN redist index publishes BOTH a 3-field release label
+/// (`redistrib_8.9.7.json`) and the 4-field full product version
+/// (`redistrib_8.9.7.29.json`) for many releases — and `resolve_cudnn` can fetch
+/// either. Collapse each `major.minor.patch` line to its SHORTEST representative
+/// (the release label, when present) so `ls-remote --cudnn` shows one row per
+/// release instead of near-identical duplicates. A line with no shorter label
+/// keeps all of its (genuinely distinct) builds, so nothing real is hidden.
+fn collapse_cudnn_lines(versions: Vec<Version>) -> Vec<Version> {
+    let line_key = |v: &Version| {
+        (
+            v.fields.first().copied().unwrap_or(0),
+            v.fields.get(1).copied().unwrap_or(0),
+            v.fields.get(2).copied().unwrap_or(0),
+        )
+    };
+    let mut groups: BTreeMap<(u32, u32, u32), Vec<Version>> = BTreeMap::new();
+    for v in versions {
+        groups.entry(line_key(&v)).or_default().push(v);
+    }
+    let mut out = Vec::new();
+    for group in groups.into_values() {
+        let min_len = group.iter().map(|v| v.fields.len()).min().unwrap_or(0);
+        out.extend(group.into_iter().filter(|v| v.fields.len() == min_len));
+    }
+    out
 }
 
 /// `ls-remote --nccl [<spec>]`: newest-first NCCL versions from the NCCL redist
@@ -377,6 +405,23 @@ mod tests {
             redist_url_for("http://host/redist/", &ver),
             "http://host/redist/redistrib_12.4.1.json"
         );
+    }
+
+    #[test]
+    fn collapse_cudnn_lines_keeps_one_label_per_release() {
+        // Label + full-version siblings collapse to the 3-field label; a line
+        // with no label keeps its full version; distinct labelless builds stay.
+        let input = vec![
+            v("8.9.7"),
+            v("8.9.7.29"),
+            v("8.9.5"),
+            v("8.9.5.29"),
+            v("8.9.5.30"),
+            v("9.10.0.56"), // no 3-field label sibling
+        ];
+        let mut out = collapse_cudnn_lines(input);
+        out.sort();
+        assert_eq!(raws(&out), ["8.9.5", "8.9.7", "9.10.0.56"]);
     }
 
     #[test]

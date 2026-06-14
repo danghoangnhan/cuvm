@@ -76,21 +76,40 @@ pub fn place_staged(layout: &Layout, sha256: &str, staged: &Path) -> Result<Path
     Ok(dst)
 }
 
-/// File names of the NCCL payload's linkable artifacts (`lib/` + `bin/` entries
-/// whose name contains `nccl`), sorted — recorded as `NcclRecord.libs`.
+/// File names of the NCCL payload's linkable artifacts (`nccl`-named FILES
+/// under `lib/` + `bin/`, at any depth), sorted — recorded as `NcclRecord.libs`.
+/// Mirrors the linker's file-level selection (`cudnn_link::link_named`) exactly
+/// — counting only files and recursing into nested dirs — so the CLI's pre-link
+/// emptiness guard and the post-link `libs` result can never disagree.
 #[must_use]
 pub fn lib_names(store: &Path) -> Vec<String> {
-    let mut names: Vec<String> = ["lib", "bin"]
-        .iter()
-        .filter_map(|sub| std::fs::read_dir(store.join(sub)).ok())
-        .flatten()
-        .filter_map(std::result::Result::ok)
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.contains("nccl"))
-        .collect();
+    let mut names: Vec<String> = Vec::new();
+    for sub in ["lib", "bin"] {
+        collect_lib_files(&store.join(sub), &mut names);
+    }
     names.sort();
     names.dedup();
     names
+}
+
+/// Recursively collect `nccl`-named file names under `dir` (directories are
+/// walked, never counted). Missing dirs are skipped.
+fn collect_lib_files(dir: &Path, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_lib_files(&path, out);
+            continue;
+        }
+        if let Ok(name) = entry.file_name().into_string() {
+            if name.contains("nccl") {
+                out.push(name);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
