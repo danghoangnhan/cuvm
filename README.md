@@ -19,34 +19,57 @@ Windows.
 
 ## Install
 
-Download the archive for your platform from the
-[latest release](https://github.com/danghoangnhan/cuvm/releases/latest),
-verify it against `SHA256SUMS`, unpack it, and put `cuvm` on your `PATH`.
+**Linux / WSL:**
 
 ```sh
-# Linux x86_64 (musl, static)
+curl -LsSf https://raw.githubusercontent.com/danghoangnhan/cuvm/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/danghoangnhan/cuvm/main/install.ps1 | iex"
+```
+
+The installer picks the right prebuilt release for your platform (`linux-amd64`
+musl/static, `linux-arm64`, or `windows-amd64`), verifies its `SHA256SUMS`
+checksum, drops the `cuvm` binary on your `PATH` (`~/.local/bin` by default) and
+the shell shims under `~/.cuvm/shims`. Tunables (env vars): `CUVM_VERSION` (pin a
+version), `CUVM_INSTALL_DIR`, `CUVM_HOME`, `CUVM_DOWNLOAD_BASE` (mirror /
+air-gapped host), `CUVM_NO_MODIFY_PATH`.
+
+<details>
+<summary>Manual install (or a specific version)</summary>
+
+Download the archive from the
+[latest release](https://github.com/danghoangnhan/cuvm/releases/latest), verify
+it against `SHA256SUMS`, unpack, and put `cuvm` on your `PATH` (replace `<ver>`,
+e.g. `0.1.0`):
+
+```sh
 curl -fsSLO https://github.com/danghoangnhan/cuvm/releases/latest/download/cuvm-<ver>-linux-amd64.tar.gz
 tar xzf cuvm-<ver>-linux-amd64.tar.gz
 install -Dm755 cuvm-<ver>-linux-amd64/cuvm ~/.local/bin/cuvm
 ```
 
 Prebuilt targets: `linux-amd64` (musl, static), `linux-arm64`, `windows-amd64`.
+</details>
 
 ### Shell integration
 
-`cuvm` activates a toolkit by printing an env script your shell `eval`s. Source
-the shim for your shell (bundled in the archive under `shims/`):
+`cuvm` activates a toolkit by printing an env script your shell `eval`s. After
+installing, source the shim the installer placed under `~/.cuvm/shims`:
 
 ```sh
 # bash — add to ~/.bashrc
-source /path/to/shims/cuvm.sh
+source ~/.cuvm/shims/cuvm.sh
 # zsh — add to ~/.zshrc
-source /path/to/shims/cuvm.zsh
+source ~/.cuvm/shims/cuvm.zsh
 ```
 
 ```powershell
 # PowerShell — add to $PROFILE
-. "C:\path\to\shims\cuvm.ps1"
+. "$HOME\.cuvm\shims\cuvm.ps1"
 ```
 
 The shim wires up the `cuvm` wrapper and a `cd`-autoload hook that re-activates
