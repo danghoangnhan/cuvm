@@ -12,6 +12,7 @@ pub mod env_plan;
 pub mod envplan;
 pub mod error;
 pub mod manifest;
+pub mod process_env;
 pub mod version;
 
 pub use candidate::Candidate;
@@ -26,4 +27,5 @@ pub use error::{CompatError, CoreError, CoreResult};
 pub use manifest::{
     BundleRecord, CudnnRecord, DriverRecord, Manifest, VersionMeta, SCHEMA_VERSION,
 };
+pub use process_env::{process_env, EnvVar};
 pub use version::Version;

@@ -26,6 +26,7 @@ cuvm-platform = { path = "../cuvm-platform" }
 cuvm-registry = { path = "../cuvm-registry" }
 cuvm-store = { path = "../cuvm-store" }
 clap = { workspace = true }
+clap_complete = { workspace = true }
 anyhow = { workspace = true }
 time = { workspace = true }
 serde_json = { workspace = true }
