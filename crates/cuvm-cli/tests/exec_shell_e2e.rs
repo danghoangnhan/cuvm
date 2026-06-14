@@ -346,3 +346,68 @@ fn ls_remote_cudnn_conflicts_with_show_urls() {
         .failure()
         .stderr(contains("cannot be used with"));
 }
+
+// ---- ls-remote --nccl (M4 / WU-20: directory index, no manifest) -----------
+
+const NCCL_INDEX_HTML: &str = r"<html><body>
+<a href='..'>..</a>
+<a href='New folder/'>New folder/</a>
+<a href='v2.20.5/'>v2.20.5/</a>
+<a href='v2.21.5/'>v2.21.5/</a>
+<a href='v2.27.3/'>v2.27.3/</a>
+</body></html>";
+
+#[test]
+fn ls_remote_nccl_lists_versions_newest_first() {
+    use httpmock::prelude::*;
+    let home = TempDir::new().unwrap();
+    let server = MockServer::start();
+    let _index = server.mock(|when, then| {
+        when.method(GET).path("/nccl/");
+        then.status(200).body(NCCL_INDEX_HTML);
+    });
+
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .env(
+            "CUVM_NCCL_REGISTRY_URL",
+            format!("{}/nccl/", server.base_url()),
+        )
+        .args(["ls-remote", "--nccl"])
+        .assert()
+        .success()
+        // newest-first, one per line, junk dirs excluded
+        .stdout(predicates::ord::eq("2.27.3\n2.21.5\n2.20.5\n"));
+}
+
+#[test]
+fn ls_remote_nccl_filters_by_spec() {
+    use httpmock::prelude::*;
+    let home = TempDir::new().unwrap();
+    let server = MockServer::start();
+    let _index = server.mock(|when, then| {
+        when.method(GET).path("/nccl/");
+        then.status(200).body(NCCL_INDEX_HTML);
+    });
+
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .env(
+            "CUVM_NCCL_REGISTRY_URL",
+            format!("{}/nccl/", server.base_url()),
+        )
+        .args(["ls-remote", "--nccl", "2.21"])
+        .assert()
+        .success()
+        .stdout(predicates::ord::eq("2.21.5\n"));
+}
+
+#[test]
+fn ls_remote_nccl_conflicts_with_cudnn() {
+    // The two product flags are mutually exclusive.
+    cuvm()
+        .args(["ls-remote", "--nccl", "--cudnn"])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used with"));
+}

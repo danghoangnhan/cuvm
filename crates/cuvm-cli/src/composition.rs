@@ -72,6 +72,16 @@ pub fn cudnn_registry_base_url() -> String {
     })
 }
 
+/// NCCL redist base URL: `CUVM_NCCL_REGISTRY_URL` env override (tests) or
+/// NVIDIA's production NCCL redist (a directory index, no manifest). Trailing
+/// slash required for the same reason as [`registry_base_url`].
+#[must_use]
+pub fn nccl_registry_base_url() -> String {
+    std::env::var("CUVM_NCCL_REGISTRY_URL").unwrap_or_else(|_| {
+        "https://developer.download.nvidia.com/compute/redist/nccl/".to_string()
+    })
+}
+
 /// The download cache directory: `$CUVM_HOME/cache`.
 #[must_use]
 pub fn cache_dir(home: &std::path::Path) -> PathBuf {
