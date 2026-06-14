@@ -390,3 +390,64 @@ fn resolve_nccl_no_build_for_cuda_major_is_a_clear_error() {
         .unwrap_err();
     assert!(err.to_string().contains("cuda13"), "{err}");
 }
+
+#[test]
+fn list_nccl_errors_on_empty_index_with_an_nccl_specific_message() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/nccl/");
+        then.status(200)
+            .body("<html><body>no version dirs here</body></html>");
+    });
+    let err = nccl_client(&server).list_nccl(&linux()).unwrap_err();
+    let msg = err.to_string();
+    // NCCL has no redistrib_<ver>.json, so the message must NOT name one.
+    assert!(msg.contains("NCCL version directories"), "{msg}");
+    assert!(!msg.contains("redistrib"), "{msg}");
+    assert!(msg.contains("/nccl/"), "{msg}");
+}
+
+#[test]
+fn resolve_nccl_selects_the_requested_arch() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/nccl/v2.21.5/");
+        then.status(200).body(NCCL_DIR_2215_HTML);
+    });
+    let v = Version::parse("2.21.5").unwrap();
+    let aarch64 = Platform {
+        os: Os::Linux,
+        arch: Arch::Aarch64,
+    };
+    // The dir has both x86_64 and aarch64 cuda12.4 builds; an aarch64 request
+    // must pick the aarch64 archive, never the x86_64 sibling.
+    let arts = nccl_client(&server)
+        .resolve_nccl(&v, &aarch64, 12)
+        .expect("aarch64 resolves");
+    assert_eq!(
+        arts[0].relative_path,
+        "v2.21.5/nccl_2.21.5-1+cuda12.4_aarch64.txz"
+    );
+}
+
+#[test]
+fn resolve_nccl_orders_cuda_minor_numerically_not_lexically() {
+    // 12.10 must beat 12.9 (10 > 9); a lexical compare would wrongly pick 12.9.
+    const DIR: &str = r"<html><body>
+        <a href='nccl_2.27.3-1+cuda12.9_x86_64.txz'>nccl_2.27.3-1+cuda12.9_x86_64.txz</a>
+        <a href='nccl_2.27.3-1+cuda12.10_x86_64.txz'>nccl_2.27.3-1+cuda12.10_x86_64.txz</a>
+    </body></html>";
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/nccl/v2.27.3/");
+        then.status(200).body(DIR);
+    });
+    let v = Version::parse("2.27.3").unwrap();
+    let arts = nccl_client(&server)
+        .resolve_nccl(&v, &linux(), 12)
+        .expect("resolves");
+    assert_eq!(
+        arts[0].relative_path, "v2.27.3/nccl_2.27.3-1+cuda12.10_x86_64.txz",
+        "newest cuda minor must be numeric (12.10 > 12.9)"
+    );
+}

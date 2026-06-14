@@ -23,6 +23,15 @@ pub enum RegistryError {
         url: String,
     },
 
+    /// The NCCL index HTML contained no `vX.Y.Z/` version directories. (The NCCL
+    /// redist has no `redistrib_<ver>.json` manifests, so its empty-index error
+    /// is distinct from [`RegistryError::EmptyIndex`].)
+    #[error("no NCCL version directories found in the redist index at {url}")]
+    EmptyNcclIndex {
+        /// The NCCL index URL that was scraped.
+        url: String,
+    },
+
     /// The manifest had no object for the requested redist platform key.
     #[error("component `{component}` has no `{platform}` artifact in this manifest")]
     MissingPlatform {
@@ -569,6 +578,13 @@ fn nccl_arch(p: Platform) -> Option<&'static str> {
 
 /// Extract every `nccl_<...>.txz` file name from an NCCL version-directory
 /// listing (the name appears twice per file — href + text — so dedupe).
+///
+/// `find(SUFFIX)` anchors only the `nccl_` prefix, so a non-archive `nccl_`
+/// token (e.g. `nccl_LICENSE.txt`) would otherwise span forward to a LATER
+/// file's `.txz`; when that junk span is rejected, a naive `rest = &after[end..]`
+/// would consume the real archive with it. Guard: on any miss/reject advance
+/// past only the `nccl_` prefix and re-scan; skip the whole file name only when
+/// it is accepted (mirrors `scrape_redistrib_versions`' recover-don't-break).
 fn scrape_nccl_files(html: &str) -> Vec<String> {
     const PREFIX: &str = "nccl_";
     const SUFFIX: &str = ".txz";
@@ -576,16 +592,18 @@ fn scrape_nccl_files(html: &str) -> Vec<String> {
     let mut rest = html;
     while let Some(start) = rest.find(PREFIX) {
         let after = &rest[start..];
+        let mut advance = PREFIX.len();
         if let Some(end) = after.find(SUFFIX) {
             let file = &after[..end + SUFFIX.len()];
             // A real file name carries no markup/quote/space/slash characters.
-            if !file.contains(['\'', '"', ' ', '/', '<', '>']) && !out.contains(&file.to_string()) {
-                out.push(file.to_string());
+            if !file.contains(['\'', '"', ' ', '/', '<', '>']) {
+                if !out.iter().any(|f| f == file) {
+                    out.push(file.to_string());
+                }
+                advance = end + SUFFIX.len(); // accepted: skip the whole file name
             }
-            rest = &after[end + SUFFIX.len()..];
-        } else {
-            break;
         }
+        rest = &after[advance..];
     }
     out
 }
@@ -614,7 +632,7 @@ impl cuvm_app::RegistryClient for DefaultRegistryClient {
             .filter_map(|s| Version::parse(&s).ok())
             .collect();
         if versions.is_empty() {
-            return Err(RegistryError::EmptyIndex {
+            return Err(RegistryError::EmptyNcclIndex {
                 url: self.nccl_base_url.clone(),
             }
             .into());
@@ -848,6 +866,26 @@ mod nccl_tests {
         let got = scrape_nccl_files(NCCL_DIR_2215);
         assert_eq!(got.len(), 5, "five distinct archives: {got:?}");
         assert!(got.contains(&"nccl_2.21.5-1+cuda12.4_x86_64.txz".to_string()));
+    }
+
+    #[test]
+    fn scrape_files_recovers_past_a_non_archive_nccl_token() {
+        // A non-`.txz` `nccl_` token before a real archive must NOT swallow it
+        // (the greedy-span / advance-past hazard), and a trailing `nccl_` with
+        // no `.txz` must not abort the scan. Bare tokens (no href/text dup).
+        let html = "nccl_LICENSE.txt \
+                    nccl_2.21.5-1+cuda12.4_x86_64.txz \
+                    nccl_2.21.5-1+cuda12.2_x86_64.txz \
+                    nccl_dangling";
+        let got = scrape_nccl_files(html);
+        assert_eq!(
+            got,
+            vec![
+                "nccl_2.21.5-1+cuda12.4_x86_64.txz".to_string(),
+                "nccl_2.21.5-1+cuda12.2_x86_64.txz".to_string(),
+            ],
+            "both real archives survive a leading .txt token and a trailing bare token"
+        );
     }
 
     #[test]

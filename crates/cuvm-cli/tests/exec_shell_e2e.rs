@@ -411,3 +411,49 @@ fn ls_remote_nccl_conflicts_with_cudnn() {
         .failure()
         .stderr(contains("cannot be used with"));
 }
+
+#[test]
+fn ls_remote_nccl_conflicts_with_show_urls_and_all_versions() {
+    // NCCL listing is index-only — neither flag has meaning on this path.
+    cuvm()
+        .args(["ls-remote", "--nccl", "--show-urls"])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used with"));
+    cuvm()
+        .args(["ls-remote", "--nccl", "--all-versions"])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used with"));
+}
+
+#[test]
+fn ls_remote_nccl_major_prefix_and_empty_result() {
+    use httpmock::prelude::*;
+    let home = TempDir::new().unwrap();
+    let server = MockServer::start();
+    let index = server.mock(|when, then| {
+        when.method(GET).path("/nccl/");
+        then.status(200).body(NCCL_INDEX_HTML);
+    });
+    let nccl_url = format!("{}/nccl/", server.base_url());
+
+    // Major prefix "2" matches all three, newest-first.
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .env("CUVM_NCCL_REGISTRY_URL", &nccl_url)
+        .args(["ls-remote", "--nccl", "2"])
+        .assert()
+        .success()
+        .stdout(predicates::ord::eq("2.27.3\n2.21.5\n2.20.5\n"));
+
+    // A non-matching spec yields no rows (success, empty stdout) — not an error.
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .env("CUVM_NCCL_REGISTRY_URL", &nccl_url)
+        .args(["ls-remote", "--nccl", "9.9"])
+        .assert()
+        .success()
+        .stdout(predicates::str::is_empty());
+    index.assert_hits(2);
+}
