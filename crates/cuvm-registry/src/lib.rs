@@ -58,6 +58,17 @@ pub enum RegistryError {
         wanted: String,
     },
 
+    /// A `--with` extra was requested but is absent from this toolkit's manifest
+    /// (e.g. a math lib that an older redist does not ship). Named, not silently
+    /// dropped, so the user gets actionable feedback (WU-20c).
+    #[error("component(s) not available in CUDA {version}: {components}")]
+    ComponentNotInManifest {
+        /// The toolkit version whose manifest was consulted.
+        version: String,
+        /// A human-readable join of the missing component names.
+        components: String,
+    },
+
     /// The NCCL `vX.Y.Z/` directory listed no archive matching the requested
     /// architecture + CUDA major (e.g. no `cuda13` NCCL build, or a non-Linux
     /// platform the mirror does not serve).
@@ -348,6 +359,68 @@ pub fn recommended_components(
         .filter(|name| present.contains_key(*name))
         .map(String::from)
         .collect()
+}
+
+/// Resolve a [`cuvm_app::ComponentPolicy`] against a parsed manifest's component
+/// set into the concrete, ordered list of component keys to fetch. Pure (no I/O)
+/// so the version-branching baseline and the `--with` merge/validation are
+/// unit-testable without standing up an HTTP mock.
+///
+/// # Errors
+/// - [`RegistryError::ComponentNotInManifest`] if a `RecommendedPlus` extra is
+///   absent from this manifest (named, not silently dropped).
+/// - [`RegistryError::NoComponents`] if the resolved set is empty.
+fn select_component_names(
+    want: &cuvm_app::ComponentPolicy,
+    version: &Version,
+    components: &BTreeMap<String, RedistComponent>,
+) -> RegistryResult<Vec<String>> {
+    let names: Vec<String> = match want {
+        cuvm_app::ComponentPolicy::Recommended => {
+            recommended_components(version.major(), components)
+        }
+        cuvm_app::ComponentPolicy::Only(list) => list
+            .iter()
+            .filter(|n| components.contains_key(n.as_str()))
+            .cloned()
+            .collect(),
+        cuvm_app::ComponentPolicy::RecommendedPlus(extras) => {
+            // Every requested extra must exist in THIS manifest — surface a named
+            // error rather than silently dropping it (an `Only`-style filter would
+            // hide a math lib missing from an older redist).
+            let missing: Vec<&str> = extras
+                .iter()
+                .map(String::as_str)
+                .filter(|n| !components.contains_key(*n))
+                .collect();
+            if !missing.is_empty() {
+                return Err(RegistryError::ComponentNotInManifest {
+                    version: version.raw.clone(),
+                    components: missing.join(", "),
+                });
+            }
+            // Recommended baseline first; append extras not already in it.
+            let mut names = recommended_components(version.major(), components);
+            for e in extras {
+                if !names.contains(e) {
+                    names.push(e.clone());
+                }
+            }
+            names
+        }
+    };
+
+    if names.is_empty() {
+        let wanted = match want {
+            cuvm_app::ComponentPolicy::Recommended => "recommended set".to_string(),
+            cuvm_app::ComponentPolicy::Only(list) => list.join(", "),
+            cuvm_app::ComponentPolicy::RecommendedPlus(list) => {
+                format!("recommended set + {}", list.join(", "))
+            }
+        };
+        return Err(RegistryError::NoComponents { wanted });
+    }
+    Ok(names)
 }
 
 use cuvm_core::{Platform, Version};
@@ -736,25 +809,7 @@ impl DefaultRegistryClient {
         let manifest_url = format!("{}redistrib_{}.json", self.base_url, v.raw);
         let body = Self::get_text(&manifest_url)?;
         let manifest = RedistManifest::parse(&body)?;
-
-        let names: Vec<String> = match want {
-            cuvm_app::ComponentPolicy::Recommended => {
-                recommended_components(v.major(), &manifest.components)
-            }
-            cuvm_app::ComponentPolicy::Only(list) => list
-                .iter()
-                .filter(|n| manifest.components.contains_key(n.as_str()))
-                .cloned()
-                .collect(),
-        };
-
-        if names.is_empty() {
-            let wanted = match want {
-                cuvm_app::ComponentPolicy::Recommended => "recommended set".to_string(),
-                cuvm_app::ComponentPolicy::Only(list) => list.join(", "),
-            };
-            return Err(RegistryError::NoComponents { wanted });
-        }
+        let names = select_component_names(want, v, &manifest.components)?;
 
         let platform_key = p.redist_key();
         let mut artifacts = Vec::with_capacity(names.len());
@@ -1308,5 +1363,80 @@ mod recommended_tests {
         let p = present(&["cuda_nvcc", "cuda_cudart"]);
         let got = recommended_components(12, &p);
         assert_eq!(got, vec!["cuda_nvcc", "cuda_cudart"]);
+    }
+
+    fn ver(s: &str) -> Version {
+        Version::parse(s).expect("test version parses")
+    }
+
+    #[test]
+    fn recommended_plus_appends_extras_after_the_baseline() {
+        let p = present(&[
+            "cuda_nvcc",
+            "cuda_cudart",
+            "cuda_nvrtc",
+            "libcublas",
+            "libcufft",
+        ]);
+        let policy =
+            cuvm_app::ComponentPolicy::RecommendedPlus(vec!["libcublas".into(), "libcufft".into()]);
+        let got = select_component_names(&policy, &ver("12.4.1"), &p).unwrap();
+        assert_eq!(
+            got,
+            vec![
+                "cuda_nvcc",
+                "cuda_cudart",
+                "cuda_nvrtc",
+                "libcublas",
+                "libcufft"
+            ]
+        );
+    }
+
+    #[test]
+    fn recommended_plus_dedups_an_extra_already_in_the_baseline() {
+        // cuda_nvrtc is part of the 12.x recommended set; re-requesting it must
+        // not duplicate the component in the resolved list.
+        let p = present(&["cuda_nvcc", "cuda_cudart", "cuda_nvrtc", "libcublas"]);
+        let policy = cuvm_app::ComponentPolicy::RecommendedPlus(vec![
+            "cuda_nvrtc".into(),
+            "libcublas".into(),
+        ]);
+        let got = select_component_names(&policy, &ver("12.4.1"), &p).unwrap();
+        assert_eq!(
+            got,
+            vec!["cuda_nvcc", "cuda_cudart", "cuda_nvrtc", "libcublas"]
+        );
+    }
+
+    #[test]
+    fn recommended_plus_with_no_extras_equals_recommended() {
+        let p = present(&["cuda_nvcc", "cuda_cudart", "cuda_nvrtc"]);
+        let got = select_component_names(
+            &cuvm_app::ComponentPolicy::RecommendedPlus(vec![]),
+            &ver("12.4.1"),
+            &p,
+        )
+        .unwrap();
+        assert_eq!(got, recommended_components(12, &p));
+    }
+
+    #[test]
+    fn recommended_plus_names_a_missing_extra_instead_of_dropping_it() {
+        // libcufft is absent from this (older) manifest: the error names exactly
+        // the missing lib and not the present one — unlike `Only`'s silent drop.
+        let p = present(&["cuda_nvcc", "cuda_cudart", "cuda_nvrtc", "libcublas"]);
+        let policy =
+            cuvm_app::ComponentPolicy::RecommendedPlus(vec!["libcublas".into(), "libcufft".into()]);
+        let err = select_component_names(&policy, &ver("12.4.1"), &p).unwrap_err();
+        assert!(
+            matches!(err, RegistryError::ComponentNotInManifest { .. }),
+            "{err}"
+        );
+        assert!(err.to_string().contains("libcufft"), "{err}");
+        assert!(
+            !err.to_string().contains("libcublas"),
+            "a present lib must not be named: {err}"
+        );
     }
 }

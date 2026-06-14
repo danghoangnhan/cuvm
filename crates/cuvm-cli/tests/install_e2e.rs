@@ -99,6 +99,12 @@ fn serve_redist_124(server: &MockServer, fixtures: &Path) {
     let (cudart_bytes, cudart_sha) = make_component_tarxz(fixtures, "cuda_cudart", "12.4.131");
     let cudart_rel =
         "cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.4.131-archive.tar.xz".to_string();
+    // A math lib so `install --with libcublas` (WU-20c) has something to resolve.
+    // libcublas is NOT in the 12.x recommended set, so a plain install never
+    // fetches it — existing recommended-set tests are unaffected by its presence.
+    let (cublas_bytes, cublas_sha) = make_component_tarxz(fixtures, "libcublas", "12.4.5.8");
+    let cublas_rel =
+        "libcublas/linux-x86_64/libcublas-linux-x86_64-12.4.5.8-archive.tar.xz".to_string();
 
     // The index lists both 12.4.1 (the installable fixture below) and 12.6.0
     // (no manifest/tarball served — present only so it scrapes as an *available*
@@ -118,11 +124,22 @@ fn serve_redist_124(server: &MockServer, fixtures: &Path) {
       "relative_path": "{cudart_rel}",
       "sha256": "{cudart_sha}",
       "md5": "00000000000000000000000000000000",
-      "size": "{size}"
+      "size": "{cudart_size}"
+    }}
+  }},
+  "libcublas": {{
+    "name": "CUDA cuBLAS",
+    "version": "12.4.5.8",
+    "linux-x86_64": {{
+      "relative_path": "{cublas_rel}",
+      "sha256": "{cublas_sha}",
+      "md5": "00000000000000000000000000000000",
+      "size": "{cublas_size}"
     }}
   }}
 }}"#,
-        size = cudart_bytes.len()
+        cudart_size = cudart_bytes.len(),
+        cublas_size = cublas_bytes.len(),
     );
 
     server.mock(|when, then| {
@@ -136,6 +153,10 @@ fn serve_redist_124(server: &MockServer, fixtures: &Path) {
     server.mock(|when, then| {
         when.method(GET).path(format!("/redist/{cudart_rel}"));
         then.status(200).body(cudart_bytes.clone());
+    });
+    server.mock(|when, then| {
+        when.method(GET).path(format!("/redist/{cublas_rel}"));
+        then.status(200).body(cublas_bytes.clone());
     });
 }
 
@@ -1009,4 +1030,61 @@ fn doctor_hints_when_no_cudnn_is_paired() {
         .arg("doctor")
         .assert()
         .stdout(contains("No cuDNN paired").and(contains("cuvm cudnn install")));
+}
+
+#[cfg(unix)]
+#[test]
+fn install_with_math_lib_records_it_and_surfaces_in_ls() {
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    let server = MockServer::start();
+    serve_redist_124(&server, fixtures.path());
+    let registry = format!("{}/redist/", server.base_url());
+
+    // `--with libcublas` (WU-20c) rides the SAME pipeline: the math lib is
+    // resolved from the same manifest, downloaded + sha-verified, merged into the
+    // toolkit, and recorded. The change line trails it with `(+ libcublas)`.
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .env("CUVM_REGISTRY_URL", &registry)
+        .env("CUVM_SKIP_SMOKE", "1")
+        .args(["install", "12.4", "--no-cudnn", "--with", "libcublas"])
+        .assert()
+        .success()
+        .stdout(contains("+ cuda 12.4.1").and(contains("(+ libcublas)")));
+
+    // The manifest records libcublas among the bundle's components...
+    let manifest = std::fs::read_to_string(home.child("manifest.json").path()).unwrap();
+    assert!(manifest.contains("libcublas"), "{manifest}");
+
+    // ...and `ls` surfaces it read-only via the `+ libcublas` annotation.
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .arg("ls")
+        .assert()
+        .success()
+        .stdout(contains("12.4.1").and(contains("+ libcublas")));
+}
+
+#[cfg(unix)]
+#[test]
+fn install_with_unknown_math_lib_fails_fast_and_installs_nothing() {
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    let server = MockServer::start();
+    serve_redist_124(&server, fixtures.path());
+    let registry = format!("{}/redist/", server.base_url());
+
+    // A name that is not a known math lib is rejected up front — before any
+    // download — naming the valid choices rather than silently dropping it.
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .env("CUVM_REGISTRY_URL", &registry)
+        .env("CUVM_SKIP_SMOKE", "1")
+        .args(["install", "12.4", "--no-cudnn", "--with", "boguslib"])
+        .assert()
+        .failure()
+        .stderr(contains("boguslib").and(contains("libcublas")));
+    home.child("versions/12.4.1")
+        .assert(predicates::path::missing());
 }

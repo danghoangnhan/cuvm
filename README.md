@@ -58,6 +58,7 @@ from a directory's `.cuda-version` pin.
 cuvm install 12.4 12.6            # download & install one or more toolkits
 cuvm install -r 12.4              # reinstall even if present (replace the existing install)
 cuvm install 12.4 --accept-eula   # toolkit + paired cuDNN (EULA recorded once)
+cuvm install 12.4 --with libcublas,libcufft    # also bundle CUDA math libraries
 cuvm cudnn install 9.8 --for 12.4.1            # pair/retrofit a specific cuDNN
 cuvm cudnn install ./cudnn-*.tar.xz --for 12.4.1   # air-gapped: ingest a local archive
 cuvm nccl install 2.21 --for 12.4.1            # pair a compatible NCCL (BSD; no EULA)
@@ -89,6 +90,13 @@ driver's ceiling is refused unless you pass `--force`.
 
 `adopt` never moves or deletes your existing installs — it registers them in
 place (`~/.cuvm`) and `uninstall` only de-registers adopted toolkits.
+
+`install --with <comp,…>` adds CUDA math libraries on top of the recommended
+component set — `libcublas`, `libcufft`, `libcurand`, `libcusolver`,
+`libcusparse`, `libnpp`, `libnvjitlink`. They ship in the same redist manifest
+(each sha256-verified), merge into the toolkit tree, and are surfaced read-only
+afterward as `+ <lib>` annotations in `cuvm ls`. A name that the toolkit's
+manifest does not ship is reported by name rather than silently skipped.
 
 cuDNN auto-download is gated behind a one-time acceptance of the NVIDIA cuDNN
 EULA — pass `--accept-eula` or answer the interactive prompt once, and the

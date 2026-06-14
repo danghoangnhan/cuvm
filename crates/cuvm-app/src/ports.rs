@@ -88,6 +88,11 @@ pub enum ComponentPolicy {
     Recommended,
     /// An explicit component-name allowlist.
     Only(Vec<String>),
+    /// The recommended baseline (version-branched) PLUS explicit extras — the
+    /// math libs requested via `install --with` (WU-20c). Unlike [`Self::Only`],
+    /// this keeps the 12.x/13.x recommended set intact; an extra that is absent
+    /// from the resolved manifest is a named error, not a silent drop.
+    RecommendedPlus(Vec<String>),
 }
 
 // ----- Trait ports (object-safe; async-free; fallible ones return anyhow::Result) -----

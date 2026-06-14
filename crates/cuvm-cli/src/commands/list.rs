@@ -36,6 +36,7 @@ struct Row {
     source: Option<&'static str>, // "downloaded" | "adopted"
     path: Option<String>,
     components: Vec<String>,
+    extra: Vec<String>, // requested math-lib names (WU-20c), surfaced read-only
     installed_at: Option<String>, // RFC3339; `None` for available-not-installed rows
     is_default: bool,
 }
@@ -74,6 +75,7 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
                     source: Some(source),
                     path: Some(b.toolkit.root.display().to_string()),
                     components: b.toolkit.components.clone(),
+                    extra: b.extra.iter().map(|c| c.name.clone()).collect(),
                     installed_at,
                     is_default: default.as_deref() == Some(handle.as_str()),
                 },
@@ -107,6 +109,7 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
                         source: None,
                         path: None,
                         components: Vec::new(),
+                        extra: Vec::new(),
                         installed_at: None,
                         is_default: false,
                     });
@@ -273,7 +276,14 @@ fn format_text_rows(list: &[Row], show_urls: bool) -> Vec<String> {
             } else {
                 "<download available>".to_string()
             };
-            format!("{cell:<width$}  {col2}")
+            // Paired math libs (WU-20c) trail the path, mirroring the `+`
+            // change-line convention: `<handle>  <path>  + libcublas, libcufft`.
+            let extra = if r.extra.is_empty() {
+                String::new()
+            } else {
+                format!("  + {}", r.extra.join(", "))
+            };
+            format!("{cell:<width$}  {col2}{extra}")
         })
         .collect()
 }
@@ -291,6 +301,7 @@ fn print_json(list: &[Row]) {
                 "url": if r.installed { serde_json::Value::Null } else { redist_url(&r.version).into() },
                 "default": r.is_default,
                 "components": r.components,
+                "extra": r.extra,
                 "installed_at": r.installed_at,
             })
         })
@@ -321,6 +332,7 @@ mod tests {
             source: installed.then_some("downloaded"),
             path: path.map(ToString::to_string),
             components: Vec::new(),
+            extra: Vec::new(),
             installed_at: None,
             is_default,
         }

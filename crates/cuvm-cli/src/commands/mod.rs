@@ -210,6 +210,11 @@ pub enum Command {
         /// Install even if the toolkit exceeds the driver ceiling.
         #[arg(long)]
         force: bool,
+        /// Also install these CUDA math libraries (comma-separated or repeated):
+        /// libcublas, libcufft, libcurand, libcusolver, libcusparse, libnpp,
+        /// libnvjitlink. They merge into the toolkit and surface in `cuvm ls`.
+        #[arg(long = "with", value_name = "COMP", value_delimiter = ',')]
+        with: Vec<String>,
     },
     /// Manage cuDNN payloads paired with installed toolkits.
     Cudnn {
@@ -404,6 +409,7 @@ impl Command {
                 no_cudnn,
                 accept_eula,
                 force,
+                with,
             } => {
                 let registry = build_registry();
                 let installer = build_pipeline_installer(&deps.home);
@@ -417,6 +423,7 @@ impl Command {
                     &specs,
                     reinstall,
                     force,
+                    &with,
                     &install::CudnnOpts {
                         explicit: cudnn,
                         skip: no_cudnn,
