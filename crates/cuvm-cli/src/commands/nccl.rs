@@ -213,8 +213,20 @@ pub fn run_nccl_install(
     let target = resolve_target(inventory, &layout, for_spec)?;
     let toolkit_major = target.toolkit_version.major();
     let path = Path::new(what);
+    // A `what` that clearly names a local archive (an archive extension —
+    // `.txz`/`.tar.xz` both end in `txz`/`xz` — or a path separator) must be a
+    // readable file. Otherwise a typo'd path would silently fall through to the
+    // registry and report a confusing "no NCCL matches `./typo.txz`" after a
+    // wasted fetch.
+    let ext_is_archive = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("txz") || e.eq_ignore_ascii_case("xz"));
+    let looks_like_archive =
+        ext_is_archive || what.contains('/') || what.contains(std::path::MAIN_SEPARATOR);
     let record = if path.is_file() {
         install_from_file(&layout, &target.root, toolkit_major, &target.handle, path)?
+    } else if looks_like_archive {
+        bail!("`{what}` looks like a local NCCL archive, but no such file exists");
     } else {
         install_from_registry(registry, &layout, &target.root, toolkit_major, what)?
     };

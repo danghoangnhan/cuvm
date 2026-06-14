@@ -36,6 +36,16 @@ pub enum DownloadError {
         actual: String,
     },
 
+    /// A no-checksum download response carried no usable `Content-Length`.
+    /// Length is the *only* integrity signal for the NCCL redist (no sha256),
+    /// so cuvm refuses to self-record a digest over bytes it cannot verify the
+    /// completeness of.
+    #[error("no Content-Length for {url}; cannot verify a checksum-less download")]
+    MissingContentLength {
+        /// The URL whose response lacked a usable `Content-Length`.
+        url: String,
+    },
+
     /// A no-checksum download's byte count disagreed with the server's
     /// `Content-Length`. This is the only integrity signal available for the
     /// NCCL redist (which publishes no sha256); a truncated body is rejected
@@ -78,6 +88,16 @@ mod tests {
         let msg = e.to_string();
         assert!(msg.contains("cuda_nvcc.tar.xz"), "{msg}");
         assert!(msg.contains("aaaa") && msg.contains("bbbb"), "{msg}");
+    }
+
+    #[test]
+    fn missing_content_length_names_the_url() {
+        let e = DownloadError::MissingContentLength {
+            url: "http://host/nccl/v2.21.5/nccl.txz".into(),
+        };
+        let msg = e.to_string();
+        assert!(msg.contains("Content-Length"), "{msg}");
+        assert!(msg.contains("http://host/nccl/v2.21.5/nccl.txz"), "{msg}");
     }
 
     #[test]

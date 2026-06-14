@@ -155,14 +155,15 @@ impl Downloader {
 
     /// Download `url` into `cache_dir/<file_name>` WITHOUT a checksum (the
     /// caller self-records the sha256 — the NCCL redist publishes none, spec
-    /// §2.3). The only integrity check available is the body length vs the
-    /// server's `Content-Length`, so a truncated download is rejected. Always
-    /// downloads fresh (no resume): without a checksum a resumed prefix cannot
-    /// be trusted.
+    /// §2.3). Length is the ONLY integrity signal, so a response without a
+    /// usable `Content-Length` is refused outright, and a body whose length
+    /// disagrees with it is rejected. Always downloads fresh (no resume):
+    /// without a checksum a resumed prefix cannot be trusted.
     ///
     /// # Errors
-    /// - [`DownloadError::SizeMismatch`] if the body length disagrees with the
-    ///   advertised `Content-Length`.
+    /// - [`DownloadError::MissingContentLength`] if the response advertises no
+    ///   usable `Content-Length` (cuvm will not self-record over unverifiable bytes).
+    /// - [`DownloadError::SizeMismatch`] if the body length disagrees with it.
     /// - [`DownloadError::HttpStatus`] / [`DownloadError::Transport`] on a bad
     ///   response or transport failure.
     /// - [`DownloadError::Io`] if a cache file cannot be created, written, or renamed.
@@ -171,11 +172,19 @@ impl Downloader {
             path: self.cache_dir.clone(),
             source,
         })?;
-        let resp = open_response(url, 0)?; // always fresh: no checksum to trust a resume
-        let total = resp
+        // Always fresh (no resume): with no checksum a resumed prefix can't be
+        // trusted. Refuse before announcing a start (so no bar dangles) when the
+        // response carries no usable length — the sole integrity signal.
+        let resp = open_response(url, 0)?;
+        let Some(total) = resp
             .header("Content-Length")
-            .and_then(|s| s.parse::<u64>().ok());
-        self.reporter.on_download_start(label, total);
+            .and_then(|s| s.parse::<u64>().ok())
+        else {
+            return Err(DownloadError::MissingContentLength {
+                url: url.to_string(),
+            });
+        };
+        self.reporter.on_download_start(label, Some(total));
 
         match self.stream_size_check_publish(resp, total, file_name, label) {
             Ok(path) => {
@@ -189,14 +198,13 @@ impl Downloader {
         }
     }
 
-    /// Stream `resp` into the `.part`, check the byte count against `total`
-    /// (the advertised `Content-Length`, when present), and atomically expose
-    /// the file — or keep nothing. The no-checksum sibling of
-    /// [`Downloader::stream_verify_publish`].
+    /// Stream `resp` into the `.part`, check the byte count against `total` (the
+    /// advertised `Content-Length`), and atomically expose the file — or keep
+    /// nothing. The no-checksum sibling of [`Downloader::stream_verify_publish`].
     fn stream_size_check_publish(
         &self,
         resp: ureq::Response,
-        total: Option<u64>,
+        total: u64,
         file_name: &str,
         label: &str,
     ) -> Result<PathBuf> {
@@ -205,21 +213,19 @@ impl Downloader {
 
         stream_into_part(resp, &part_path, false, self.reporter.as_ref(), label)?;
 
-        if let Some(total) = total {
-            let got = fs::metadata(&part_path)
-                .map_err(|source| DownloadError::Io {
-                    path: part_path.clone(),
-                    source,
-                })?
-                .len();
-            if got != total {
-                let _ = fs::remove_file(&part_path);
-                return Err(DownloadError::SizeMismatch {
-                    file_name: file_name.to_string(),
-                    expected: total,
-                    actual: got,
-                });
-            }
+        let got = fs::metadata(&part_path)
+            .map_err(|source| DownloadError::Io {
+                path: part_path.clone(),
+                source,
+            })?
+            .len();
+        if got != total {
+            let _ = fs::remove_file(&part_path);
+            return Err(DownloadError::SizeMismatch {
+                file_name: file_name.to_string(),
+                expected: total,
+                actual: got,
+            });
         }
 
         fs::rename(&part_path, &final_path).map_err(|source| DownloadError::Io {
