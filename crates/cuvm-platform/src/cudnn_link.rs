@@ -1,7 +1,8 @@
-//! Link a content-addressed cuDNN payload into a DOWNLOADED toolkit tree
-//! (spec §2.3/§10: full `libcudnn*` set + headers; symlink Unix, copy
-//! Windows). Adopted toolkits are never modified — callers enforce that
-//! before reaching this module (plan D8).
+//! Link a content-addressed companion payload (cuDNN, NCCL) into a DOWNLOADED
+//! toolkit tree (spec §2.3/§10: full lib set + headers; symlink Unix, copy
+//! Windows). Adopted toolkits are never modified — callers enforce that before
+//! reaching this module (plan D8). The core link/unlink logic is generic over a
+//! payload-name `needle`; `link_cudnn`/`link_nccl` are thin wrappers.
 
 use std::path::Path;
 
@@ -13,25 +14,50 @@ use cuvm_core::Os;
 /// DLLs; `include` covers headers. Missing store subdirs are skipped.
 const SUBDIRS: [&str; 3] = ["lib", "bin", "include"];
 
-/// Is this store/toolkit entry part of the cuDNN payload?
-fn is_cudnn_name(name: &str) -> bool {
-    name.contains("cudnn")
-}
-
-/// Link (Unix: absolute symlinks) or copy (Windows) every cuDNN-named entry
-/// from the store's `lib`/`bin`/`include` into the same subdirs of
-/// `toolkit_root`. On Windows, directory entries under `lib`/`bin` (e.g.
-/// `lib/x64/`) are copied recursively regardless of their own name. Returns
-/// the linked library file names — top-level cuDNN-named files from `lib` +
-/// `bin` — sorted: the `Cudnn.libs` record. Existing same-named entries are
-/// replaced. The return value is the authoritative `Cudnn.libs` record;
-/// `cuvm_store::cudnn_store::lib_names` (which also counts cudnn-named
-/// directories) is only a store-side approximation of it.
+/// Link the full cuDNN payload (entries whose name contains `cudnn`).
 ///
 /// # Errors
-/// Filesystem failures (creating dirs, reading the store, symlinking,
-/// copying).
+/// Filesystem failures (creating dirs, reading the store, symlinking, copying).
 pub fn link_cudnn(os: Os, store: &Path, toolkit_root: &Path) -> Result<Vec<String>> {
+    link_named(os, store, toolkit_root, "cudnn")
+}
+
+/// Remove previously linked cuDNN entries from the toolkit.
+///
+/// # Errors
+/// Filesystem failures while removing entries.
+pub fn unlink_cudnn(os: Os, toolkit_root: &Path) -> Result<()> {
+    unlink_named(os, toolkit_root, "cudnn")
+}
+
+/// Link the full NCCL payload (entries whose name contains `nccl`).
+///
+/// # Errors
+/// Filesystem failures (creating dirs, reading the store, symlinking, copying).
+pub fn link_nccl(os: Os, store: &Path, toolkit_root: &Path) -> Result<Vec<String>> {
+    link_named(os, store, toolkit_root, "nccl")
+}
+
+/// Remove previously linked NCCL entries from the toolkit.
+///
+/// # Errors
+/// Filesystem failures while removing entries.
+pub fn unlink_nccl(os: Os, toolkit_root: &Path) -> Result<()> {
+    unlink_named(os, toolkit_root, "nccl")
+}
+
+/// Link (Unix: absolute symlinks) or copy (Windows) every `needle`-named entry
+/// from the store's `lib`/`bin`/`include` into the same subdirs of
+/// `toolkit_root`. On Windows, directory entries under `lib`/`bin` (e.g.
+/// `lib/x64/`) are copied recursively regardless of their own name. Returns the
+/// linked library file names — top-level `needle`-named files from `lib` +
+/// `bin` — sorted: the authoritative `libs` record. Existing same-named entries
+/// are replaced. (The store-side `lib_names` helpers, which also count
+/// `needle`-named directories, are only an approximation of this.)
+///
+/// # Errors
+/// Filesystem failures (creating dirs, reading the store, symlinking, copying).
+pub fn link_named(os: Os, store: &Path, toolkit_root: &Path, needle: &str) -> Result<Vec<String>> {
     let mut libs: Vec<String> = Vec::new();
 
     for sub in SUBDIRS {
@@ -53,15 +79,15 @@ pub fn link_cudnn(os: Os, store: &Path, toolkit_root: &Path) -> Result<Vec<Strin
 
             // Windows payloads nest import libs under lib/x64/: such directory
             // entries are copied wholesale regardless of their own name, but
-            // only TOP-LEVEL cudnn-named FILES count toward `libs`.
-            let wanted = is_cudnn_name(&name) || (os == Os::Windows && is_dir && sub != "include");
+            // only TOP-LEVEL payload-named FILES count toward `libs`.
+            let wanted = name.contains(needle) || (os == Os::Windows && is_dir && sub != "include");
             if !wanted {
                 continue;
             }
             let dst = dst_dir.join(&name);
             replace_entry(os, &src, &dst)
                 .with_context(|| format!("linking {} -> {}", src.display(), dst.display()))?;
-            if sub != "include" && !is_dir && is_cudnn_name(&name) {
+            if sub != "include" && !is_dir && name.contains(needle) {
                 libs.push(name);
             }
         }
@@ -72,18 +98,18 @@ pub fn link_cudnn(os: Os, store: &Path, toolkit_root: &Path) -> Result<Vec<Strin
     Ok(libs)
 }
 
-/// Remove previously linked cuDNN entries from the toolkit's `lib`/`bin`/
-/// `include`. Unix removes only cuDNN-named SYMLINKS (the only thing linking
-/// creates, so toolkit-owned real files are safe); Windows removes cuDNN-named
-/// files/dirs (they were copies). Missing subdirs are skipped. Known
-/// limitation: on Windows, cuDNN copies nested inside non-cudnn-named
+/// Remove previously linked `needle`-named entries from the toolkit's `lib`/
+/// `bin`/`include`. Unix removes only `needle`-named SYMLINKS (the only thing
+/// linking creates, so toolkit-owned real files are safe); Windows removes
+/// `needle`-named files/dirs (they were copies). Missing subdirs are skipped.
+/// Known limitation: on Windows, copies nested inside non-`needle`-named
 /// directories (e.g. `lib/x64/cudnn.lib`) survive unlink, because the name
 /// filter only sees the top-level entry — a subsequent relink overwrites such
 /// directories anyway.
 ///
 /// # Errors
 /// Filesystem failures while removing entries.
-pub fn unlink_cudnn(os: Os, toolkit_root: &Path) -> Result<()> {
+pub fn unlink_named(os: Os, toolkit_root: &Path, needle: &str) -> Result<()> {
     for sub in SUBDIRS {
         let dir = toolkit_root.join(sub);
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -91,7 +117,7 @@ pub fn unlink_cudnn(os: Os, toolkit_root: &Path) -> Result<()> {
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !is_cudnn_name(&name) {
+            if !name.contains(needle) {
                 continue;
             }
             let path = entry.path();
@@ -283,5 +309,39 @@ mod tests {
         std::fs::write(root.join("lib/libcudart.so"), b"toolkit-owned").unwrap();
         unlink_cudnn(Os::Windows, &root).unwrap();
         assert!(root.join("lib/libcudart.so").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_nccl_symlinks_only_the_nccl_set_and_unlinks_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = tmp.path().join("store");
+        let root = tmp.path().join("toolkit");
+        mk(
+            &store,
+            &[
+                "lib/libnccl.so",
+                "lib/libnccl.so.2",
+                "lib/libcudart.so", // a non-nccl sibling: must be ignored
+                "include/nccl.h",
+            ],
+        );
+        std::fs::create_dir_all(root.join("lib")).unwrap();
+
+        let libs = link_nccl(Os::Linux, &store, &root).unwrap();
+        assert_eq!(libs, ["libnccl.so", "libnccl.so.2"]);
+        assert!(std::fs::symlink_metadata(root.join("lib/libnccl.so"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(root.join("include/nccl.h").exists(), "headers linked too");
+        assert!(
+            !root.join("lib/libcudart.so").exists(),
+            "non-nccl entries are not linked"
+        );
+
+        unlink_nccl(Os::Linux, &root).unwrap();
+        assert!(!root.join("lib/libnccl.so").exists());
+        assert!(!root.join("include/nccl.h").exists());
     }
 }

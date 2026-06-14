@@ -89,6 +89,23 @@ pub struct CudnnRecord {
     pub installed_at: OffsetDateTime,
 }
 
+/// Per-version NCCL sidecar (`versions/<ver>/.cuvm-nccl.json`) — the rich
+/// record backing a toolkit's paired NCCL companion (spec §2.3, WU-20). Same
+/// shape and hydration posture as [`CudnnRecord`]; the store path is derived as
+/// `<nccl_dir>/<sha256>`. The `sha256` is **self-recorded** (the NCCL redist
+/// publishes no checksums), so it is the hash cuvm computed over the archive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NcclRecord {
+    pub version: String,
+    pub cuda_major: u32,
+    pub source: Source,
+    pub sha256: String,
+    #[serde(default)]
+    pub libs: Vec<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub installed_at: OffsetDateTime,
+}
+
 /// Last driver probe cached in the manifest for offline `doctor`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DriverRecord {

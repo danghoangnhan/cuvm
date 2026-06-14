@@ -12,6 +12,7 @@ pub mod exec;
 pub mod hook;
 pub mod install;
 pub mod list;
+pub mod nccl;
 pub mod pin;
 pub mod shell;
 pub mod r#use;
@@ -215,6 +216,11 @@ pub enum Command {
         #[command(subcommand)]
         command: CudnnCommand,
     },
+    /// Manage NCCL companion payloads paired with installed toolkits.
+    Nccl {
+        #[command(subcommand)]
+        command: NcclCommand,
+    },
     /// Print the currently active bundle handle.
     Current,
     /// Print the absolute toolkit root for a spec.
@@ -295,6 +301,23 @@ pub enum CudnnCommand {
         accept_eula: bool,
     },
     /// List cuDNN payloads in the content store and their toolkits.
+    Ls,
+}
+
+/// `cuvm nccl <...>` (spec §2.3, WU-20). BSD-licensed → no EULA gate.
+#[derive(Debug, Subcommand)]
+pub enum NcclCommand {
+    /// Download an NCCL (or ingest a local `.txz` archive) and link it into an
+    /// installed toolkit. The NCCL build is selected for the toolkit's CUDA major.
+    Install {
+        /// Version spec (`2.21`, `2.21.5`, `latest`) or a path to a local
+        /// `nccl_<ver>-<build>+cuda<major.minor>_<arch>.txz`.
+        what: String,
+        /// Installed toolkit to pair with (e.g. `12.4.1`, or `12.4`).
+        #[arg(long = "for", value_name = "TOOLKIT")]
+        for_toolkit: String,
+    },
+    /// List NCCL payloads in the content store and their toolkits.
     Ls,
 }
 
@@ -421,6 +444,22 @@ impl Command {
                 }
                 CudnnCommand::Ls => {
                     cudnn::run_cudnn_ls(deps.inventory.as_ref(), &deps.home)?;
+                    Ok(0)
+                }
+            },
+            Command::Nccl { command } => match command {
+                NcclCommand::Install { what, for_toolkit } => {
+                    let registry = build_registry();
+                    nccl::run_nccl_install(
+                        registry.as_ref(),
+                        deps.inventory.as_ref(),
+                        &deps.home,
+                        &what,
+                        &for_toolkit,
+                    )
+                }
+                NcclCommand::Ls => {
+                    nccl::run_nccl_ls(deps.inventory.as_ref(), &deps.home)?;
                     Ok(0)
                 }
             },

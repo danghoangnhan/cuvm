@@ -153,6 +153,82 @@ impl Downloader {
         }
     }
 
+    /// Download `url` into `cache_dir/<file_name>` WITHOUT a checksum (the
+    /// caller self-records the sha256 — the NCCL redist publishes none, spec
+    /// §2.3). The only integrity check available is the body length vs the
+    /// server's `Content-Length`, so a truncated download is rejected. Always
+    /// downloads fresh (no resume): without a checksum a resumed prefix cannot
+    /// be trusted.
+    ///
+    /// # Errors
+    /// - [`DownloadError::SizeMismatch`] if the body length disagrees with the
+    ///   advertised `Content-Length`.
+    /// - [`DownloadError::HttpStatus`] / [`DownloadError::Transport`] on a bad
+    ///   response or transport failure.
+    /// - [`DownloadError::Io`] if a cache file cannot be created, written, or renamed.
+    pub fn fetch_unverified(&self, url: &str, file_name: &str, label: &str) -> Result<PathBuf> {
+        fs::create_dir_all(&self.cache_dir).map_err(|source| DownloadError::Io {
+            path: self.cache_dir.clone(),
+            source,
+        })?;
+        let resp = open_response(url, 0)?; // always fresh: no checksum to trust a resume
+        let total = resp
+            .header("Content-Length")
+            .and_then(|s| s.parse::<u64>().ok());
+        self.reporter.on_download_start(label, total);
+
+        match self.stream_size_check_publish(resp, total, file_name, label) {
+            Ok(path) => {
+                self.reporter.on_download_finish(label);
+                Ok(path)
+            }
+            Err(err) => {
+                self.reporter.on_download_abort(label);
+                Err(err)
+            }
+        }
+    }
+
+    /// Stream `resp` into the `.part`, check the byte count against `total`
+    /// (the advertised `Content-Length`, when present), and atomically expose
+    /// the file — or keep nothing. The no-checksum sibling of
+    /// [`Downloader::stream_verify_publish`].
+    fn stream_size_check_publish(
+        &self,
+        resp: ureq::Response,
+        total: Option<u64>,
+        file_name: &str,
+        label: &str,
+    ) -> Result<PathBuf> {
+        let final_path = self.cache_dir.join(file_name);
+        let part_path = self.cache_dir.join(format!("{file_name}.part"));
+
+        stream_into_part(resp, &part_path, false, self.reporter.as_ref(), label)?;
+
+        if let Some(total) = total {
+            let got = fs::metadata(&part_path)
+                .map_err(|source| DownloadError::Io {
+                    path: part_path.clone(),
+                    source,
+                })?
+                .len();
+            if got != total {
+                let _ = fs::remove_file(&part_path);
+                return Err(DownloadError::SizeMismatch {
+                    file_name: file_name.to_string(),
+                    expected: total,
+                    actual: got,
+                });
+            }
+        }
+
+        fs::rename(&part_path, &final_path).map_err(|source| DownloadError::Io {
+            path: final_path.clone(),
+            source,
+        })?;
+        Ok(final_path)
+    }
+
     /// Stream `resp` into the `.part`, verify the digest, and atomically expose
     /// the file under its final name — or keep nothing. Split out of
     /// [`Downloader::fetch_labeled`] so every `?` here funnels through its
@@ -533,6 +609,34 @@ mod progress_tests {
             "{events:?}"
         );
     }
+
+    #[test]
+    fn fetch_unverified_downloads_a_self_recordable_file() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/nccl.txz");
+            then.status(200).body(BODY);
+        });
+        let cache = tempfile::tempdir().unwrap();
+        let (dl, rec) = recording_downloader(cache.path());
+        let path = dl
+            .fetch_unverified(&server.url("/nccl.txz"), "nccl.txz", "nccl 2.21.5")
+            .unwrap();
+        // The bytes landed and hash to the expected digest (caller self-records).
+        assert_eq!(std::fs::read(&path).unwrap(), BODY);
+        assert_eq!(super::sha256_file(&path).unwrap(), sha_of(BODY));
+        let events = rec.events.lock().unwrap();
+        assert_eq!(
+            events.last().map(String::as_str),
+            Some("finish:nccl 2.21.5")
+        );
+    }
+
+    // NOTE: the `SizeMismatch` (truncated body) branch of `fetch_unverified`
+    // cannot be exercised through httpmock — its hyper backend panics if asked
+    // to serve a `Content-Length` that disagrees with the body. The guard
+    // itself is a trivial `if got != total`; the variant's message is locked by
+    // a unit test in `error.rs`.
 
     #[test]
     fn http_status_failure_before_start_emits_no_progress_events() {
