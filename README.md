@@ -1,152 +1,52 @@
 # cuvm — nvm for CUDA
 
 `cuvm` is an [nvm](https://github.com/nvm-sh/nvm)-style version manager for the
-**CUDA toolkit** (and cuDNN). Install, switch, and pin multiple CUDA toolkits
-per-shell, with no root and zero runtime dependencies. Linux / WSL **and**
-Windows.
-
-> **Status — Milestone 4 (in progress).** Activation polish has landed:
-> `cuvm exec <spec> -- <cmd>` runs a one-off command with a toolkit active,
-> `cuvm shell <spec>` drops into a subshell with it active, `cuvm completions
-> <shell>` emits shell completions, and `ls-remote` takes a version filter plus
-> `--all-versions`/`--show-urls`. Built on M3's cuDNN pairing: `install` pairs
-> each toolkit with a matching cuDNN via EULA-gated auto-download from NVIDIA's
-> account-free cuDNN redist (user-supplied archives can always be ingested
-> instead), payloads live in a content-addressed store
-> (`~/.cuvm/cudnn/<sha256>/`) linked into the toolkit tree, and `doctor`
-> validates the toolkit↔cuDNN pairing. NCCL companion libs are the remaining M4
-> work.
+**CUDA toolkit** (plus cuDNN, NCCL, and cuBLAS math libs). Install, switch, and
+pin multiple CUDA toolkits per-shell — no root, zero runtime dependencies, on
+Linux / WSL **and** Windows.
 
 ## Install
 
-**Linux / WSL:**
+**Linux / WSL**
 
 ```sh
 curl -LsSf https://raw.githubusercontent.com/danghoangnhan/cuvm/main/install.sh | sh
 ```
 
-**Windows (PowerShell):**
+**Windows (PowerShell)**
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/danghoangnhan/cuvm/main/install.ps1 | iex"
 ```
 
-The installer picks the right prebuilt release for your platform (`linux-amd64`
-musl/static, `linux-arm64`, or `windows-amd64`), verifies its `SHA256SUMS`
-checksum, drops the `cuvm` binary on your `PATH` (`~/.local/bin` by default) and
-the shell shims under `~/.cuvm/shims`. Tunables (env vars): `CUVM_VERSION` (pin a
-version), `CUVM_INSTALL_DIR`, `CUVM_HOME`, `CUVM_DOWNLOAD_BASE` (mirror /
-air-gapped host), `CUVM_NO_MODIFY_PATH`.
+Then source the shim once (`source ~/.cuvm/shims/cuvm.sh` in your `~/.bashrc`) to
+enable the `cuvm` wrapper and `cd`-autoload. See the
+[Installation guide](https://github.com/danghoangnhan/cuvm/wiki/Installation) for
+manual install, version pinning, env knobs, and shell integration.
 
-<details>
-<summary>Manual install (or a specific version)</summary>
-
-Download the archive from the
-[latest release](https://github.com/danghoangnhan/cuvm/releases/latest), verify
-it against `SHA256SUMS`, unpack, and put `cuvm` on your `PATH` (replace `<ver>`,
-e.g. `0.1.0`):
+## Quick start
 
 ```sh
-curl -fsSLO https://github.com/danghoangnhan/cuvm/releases/latest/download/cuvm-<ver>-linux-amd64.tar.gz
-tar xzf cuvm-<ver>-linux-amd64.tar.gz
-install -Dm755 cuvm-<ver>-linux-amd64/cuvm ~/.local/bin/cuvm
+cuvm install 12.4        # download a CUDA toolkit
+cuvm use 12.4            # activate it in the current shell
+cuvm pin 12.4            # write .cuda-version so cd auto-activates here
+cuvm doctor              # check driver / PATH / pairing health
 ```
 
-Prebuilt targets: `linux-amd64` (musl, static), `linux-arm64`, `windows-amd64`.
-</details>
+## Documentation
 
-### Shell integration
+Full docs live in the **[wiki](https://github.com/danghoangnhan/cuvm/wiki)**:
 
-`cuvm` activates a toolkit by printing an env script your shell `eval`s. After
-installing, source the shim the installer placed under `~/.cuvm/shims`:
+- **[Installation](https://github.com/danghoangnhan/cuvm/wiki/Installation)** — one-line & manual install, env knobs, shell integration
+- **[Usage](https://github.com/danghoangnhan/cuvm/wiki/Usage)** — commands, switching, pinning, `doctor`, `.cuda-version`
+- **[Companion libraries](https://github.com/danghoangnhan/cuvm/wiki/Companion-Libraries)** — cuDNN, NCCL, cuBLAS math libs
+- **[Building from source](https://github.com/danghoangnhan/cuvm/wiki/Building-from-Source)** — native + cross-compile
 
-```sh
-# bash — add to ~/.bashrc
-source ~/.cuvm/shims/cuvm.sh
-# zsh — add to ~/.zshrc
-source ~/.cuvm/shims/cuvm.zsh
-```
+## Status
 
-```powershell
-# PowerShell — add to $PROFILE
-. "$HOME\.cuvm\shims\cuvm.ps1"
-```
-
-The shim wires up the `cuvm` wrapper and a `cd`-autoload hook that re-activates
-from a directory's `.cuda-version` pin.
-
-## Usage
-
-```sh
-cuvm install 12.4 12.6            # download & install one or more toolkits
-cuvm install -r 12.4              # reinstall even if present (replace the existing install)
-cuvm install 12.4 --accept-eula   # toolkit + paired cuDNN (EULA recorded once)
-cuvm install 12.4 --with libcublas,libcufft    # also bundle CUDA math libraries
-cuvm cudnn install 9.8 --for 12.4.1            # pair/retrofit a specific cuDNN
-cuvm cudnn install ./cudnn-*.tar.xz --for 12.4.1   # air-gapped: ingest a local archive
-cuvm nccl install 2.21 --for 12.4.1            # pair a compatible NCCL (BSD; no EULA)
-cuvm nccl install ./nccl_*.txz --for 12.4.1   # air-gapped: ingest a local NCCL archive
-cuvm nccl ls                      # NCCL payloads in the content store
-cuvm cudnn ls                     # cuDNN payloads in the content store
-cuvm adopt /usr/local/cuda-12.4   # register an existing toolkit in place
-cuvm adopt --scan                 # discover & adopt /usr/local/cuda-* installs
-cuvm ls                           # installed toolkits + `<download available>`
-cuvm ls --output-format json      # the same list, machine-readable
-cuvm ls-remote                    # downloadable versions (alias: ls --only-downloads)
-cuvm ls-remote 12.4 --all-versions   # filter remote versions; show every patch
-cuvm ls-remote --cudnn            # downloadable cuDNN versions
-cuvm ls-remote --nccl             # downloadable NCCL versions
-cuvm use 12.4                     # activate in the current shell
-cuvm exec 12.4 -- nvcc --version  # run one command with 12.4 active (no shell switch)
-cuvm shell 12.4                   # drop into a subshell with 12.4 active (exit to return)
-cuvm default 12.6                 # set the persistent default
-cuvm pin 12.4                     # write .cuda-version in the current dir
-cuvm which 12.4                   # print a toolkit's absolute root
-cuvm doctor                       # diagnose driver/toolkit/PATH health
-cuvm uninstall 12.4.1             # remove a toolkit (exact handle, see cuvm ls)
-cuvm completions zsh              # print a shell completion script (bash/zsh/fish/pwsh/elvish)
-```
-
-`install` is idempotent — re-running it on an installed version is a no-op
-unless you pass `--reinstall`/`-r`. Installing a version newer than your
-driver's ceiling is refused unless you pass `--force`.
-
-`adopt` never moves or deletes your existing installs — it registers them in
-place (`~/.cuvm`) and `uninstall` only de-registers adopted toolkits.
-
-`install --with <comp,…>` adds CUDA math libraries on top of the recommended
-component set — `libcublas`, `libcufft`, `libcurand`, `libcusolver`,
-`libcusparse`, `libnpp`, `libnvjitlink`. They ship in the same redist manifest
-(each sha256-verified), merge into the toolkit tree, and are surfaced read-only
-afterward as `+ <lib>` annotations in `cuvm ls`. A name that the toolkit's
-manifest does not ship is reported by name rather than silently skipped.
-
-cuDNN auto-download is gated behind a one-time acceptance of the NVIDIA cuDNN
-EULA — pass `--accept-eula` or answer the interactive prompt once, and the
-acceptance is recorded under `~/.cuvm/eula/`. User-supplied archives
-(`cuvm cudnn install ./cudnn-*.tar.xz --for …`) are always accepted, with no
-network access required.
-
-`exec`/`shell` apply the same per-shell activation as `use` (strip the prior
-`CUVM_INJECTED` breadcrumb, then prepend the toolkit's `bin`/`lib64`) directly
-to a child process, so a one-off command or subshell gets an activated CUDA
-environment without touching the parent shell. NCCL companion pairing has
-landed (`cuvm nccl install <ver|file> --for <toolkit>`): cuvm picks the build
-for the toolkit's CUDA major from NVIDIA's account-free NCCL redist — which
-ships no manifest or checksums, so cuvm self-records each archive's sha256 into
-a content-addressed store and links the full `libnccl*` set into the toolkit.
-NCCL is BSD-licensed, so no EULA gate. The integration/smoke harness is the
-remaining M4 work.
-
-## Building from source
-
-```sh
-cargo build --release -p cuvm-cli
-# cross-compile (matches CI / releases):
-cargo zigbuild -p cuvm-cli --release --target x86_64-pc-windows-gnu
-```
-
-Requires Rust 1.92+. Cross-compilation uses [`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild).
+Milestones **M1–M4 shipped** — switch core, install/download, cuDNN bundling, and
+companion libs + polish. Progress is tracked on the
+[Milestones](https://github.com/danghoangnhan/cuvm/milestones) board.
 
 ## License
 
