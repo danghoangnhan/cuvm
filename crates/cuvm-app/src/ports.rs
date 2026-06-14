@@ -239,6 +239,26 @@ pub trait RegistryClient {
     /// Returns an error if the registry cannot be queried.
     fn list_cudnn(&self, p: &Platform, major: u32) -> Result<Vec<Version>>;
 
+    /// List available NCCL versions (the redist `nccl/vX.Y.Z/` directories).
+    /// The NCCL mirror is a plain directory index with no manifest, so this is
+    /// index-only — `p` is accepted for port symmetry but not used as a filter
+    /// (platform/CUDA-major gaps surface at [`RegistryClient::resolve_nccl`]).
+    ///
+    /// # Errors
+    /// Returns an error if the registry cannot be queried.
+    fn list_nccl(&self, p: &Platform) -> Result<Vec<Version>>;
+
+    /// Resolve an NCCL version to its single artifact for `p` and `cuda_major`.
+    ///
+    /// The NCCL redist ships NO checksums, so the returned [`Artifact`] has an
+    /// **empty `sha256`**: the caller downloads then self-records the hash
+    /// (spec §2.3). The newest `cuda<major>.*` build variant is selected.
+    ///
+    /// # Errors
+    /// Returns an error if the version directory cannot be listed or has no
+    /// build matching `p`/`cuda_major`.
+    fn resolve_nccl(&self, v: &Version, p: &Platform, cuda_major: u32) -> Result<Vec<Artifact>>;
+
     /// Resolve a toolkit version to its component artifacts.
     ///
     /// # Errors

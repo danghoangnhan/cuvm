@@ -173,8 +173,14 @@ pub enum Command {
         /// The cuDNN listing is always all-versions and carries no redist-URL
         /// column, so it conflicts with `--all-versions`/`--show-urls` rather
         /// than silently ignoring them.
-        #[arg(long, conflicts_with_all = ["all_versions", "show_urls"])]
+        #[arg(long, conflicts_with_all = ["all_versions", "show_urls", "nccl"])]
         cudnn: bool,
+        /// List NCCL versions from the NCCL redist instead of toolkits.
+        ///
+        /// Like `--cudnn`, NCCL listing is index-only (no URL column / patch
+        /// collapse), so it conflicts with `--all-versions`/`--show-urls`.
+        #[arg(long, conflicts_with_all = ["all_versions", "show_urls"])]
+        nccl: bool,
         /// Include old patch releases (default collapses to the newest patch per minor).
         #[arg(long)]
         all_versions: bool,
@@ -342,12 +348,15 @@ impl Command {
             Command::LsRemote {
                 spec,
                 cudnn,
+                nccl,
                 all_versions,
                 show_urls,
             } => {
                 let registry = build_registry();
                 if cudnn {
                     list::run_list_cudnn_remote(registry.as_ref(), spec.as_deref())?;
+                } else if nccl {
+                    list::run_list_nccl_remote(registry.as_ref(), spec.as_deref())?;
                 } else {
                     list::run_list(
                         deps,
@@ -497,6 +506,7 @@ fn build_registry() -> Box<dyn cuvm_app::RegistryClient> {
     Box::new(cuvm_registry::DefaultRegistryClient::with_base_urls(
         crate::composition::registry_base_url(),
         crate::composition::cudnn_registry_base_url(),
+        crate::composition::nccl_registry_base_url(),
     ))
 }
 

@@ -165,6 +165,27 @@ pub fn run_list_cudnn_remote(registry: &dyn RegistryClient, spec: Option<&str>) 
     Ok(())
 }
 
+/// `ls-remote --nccl [<spec>]`: newest-first NCCL versions from the NCCL redist
+/// directory index, optionally filtered by an exact/minor/major prefix. Live
+/// fetch only (the flag is explicit network intent).
+///
+/// # Errors
+/// Returns an error if the NCCL redist index cannot be fetched.
+pub fn run_list_nccl_remote(registry: &dyn RegistryClient, spec: Option<&str>) -> Result<()> {
+    let platform = current_platform();
+    let mut versions = registry
+        .list_nccl(&platform)
+        .context("fetching the NCCL redist index")?;
+    if let Some(spec) = spec {
+        versions.retain(|v| spec_matches(spec, v));
+    }
+    versions.sort();
+    for v in versions.iter().rev() {
+        println!("{}", v.raw);
+    }
+    Ok(())
+}
+
 /// Apply the `spec` filter, then (unless `all_versions`) collapse to the
 /// newest patch per minor. Filtering FIRST keeps an exact-patch query for an
 /// older patch visible — collapsing first would drop it before it can match.

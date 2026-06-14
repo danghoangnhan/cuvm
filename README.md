@@ -68,6 +68,7 @@ cuvm ls --output-format json      # the same list, machine-readable
 cuvm ls-remote                    # downloadable versions (alias: ls --only-downloads)
 cuvm ls-remote 12.4 --all-versions   # filter remote versions; show every patch
 cuvm ls-remote --cudnn            # downloadable cuDNN versions
+cuvm ls-remote --nccl             # downloadable NCCL versions
 cuvm use 12.4                     # activate in the current shell
 cuvm exec 12.4 -- nvcc --version  # run one command with 12.4 active (no shell switch)
 cuvm shell 12.4                   # drop into a subshell with 12.4 active (exit to return)
@@ -95,8 +96,10 @@ network access required.
 `exec`/`shell` apply the same per-shell activation as `use` (strip the prior
 `CUVM_INJECTED` breadcrumb, then prepend the toolkit's `bin`/`lib64`) directly
 to a child process, so a one-off command or subshell gets an activated CUDA
-environment without touching the parent shell. NCCL companion-lib pairing is the
-remaining M4 work.
+environment without touching the parent shell. NCCL discovery has landed
+(`cuvm ls-remote --nccl`, sourced from NVIDIA's account-free NCCL redist, which
+ships no manifest or checksums — cuvm self-records each archive's sha256);
+`cuvm nccl install` pairing is the remaining M4 work.
 
 ## Building from source
 

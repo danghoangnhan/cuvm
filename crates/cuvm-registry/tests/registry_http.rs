@@ -234,6 +234,7 @@ fn list_cudnn_scrapes_the_cudnn_index_sorted() {
     let client = DefaultRegistryClient::with_base_urls(
         format!("{}/redist/", server.base_url()),
         format!("{}/cudnn/", server.base_url()),
+        format!("{}/nccl/", server.base_url()),
     );
     let got = client.list_cudnn(&linux(), 12).expect("lists");
     let raws: Vec<&str> = got.iter().map(|v| v.raw.as_str()).collect();
@@ -251,6 +252,7 @@ fn resolve_cudnn_builds_the_artifact_from_the_cudnn_base() {
     let client = DefaultRegistryClient::with_base_urls(
         format!("{}/redist/", server.base_url()),
         format!("{}/cudnn/", server.base_url()),
+        format!("{}/nccl/", server.base_url()),
     );
     let v = Version::parse("9.8.0").unwrap();
     let arts = client.resolve_cudnn(&v, &linux(), 12).expect("resolves");
@@ -282,6 +284,7 @@ fn resolve_cudnn_missing_variant_is_a_clear_error() {
     let client = DefaultRegistryClient::with_base_urls(
         format!("{}/redist/", server.base_url()),
         format!("{}/cudnn/", server.base_url()),
+        format!("{}/nccl/", server.base_url()),
     );
     let v = Version::parse("9.8.0").unwrap();
     let err = client.resolve_cudnn(&v, &linux(), 13).unwrap_err();
@@ -297,10 +300,93 @@ fn resolve_cudnn_404_error_names_the_status_and_manifest_url() {
     let client = DefaultRegistryClient::with_base_urls(
         format!("{}/redist/", server.base_url()),
         format!("{}/cudnn/", server.base_url()),
+        format!("{}/nccl/", server.base_url()),
     );
     let v = Version::parse("9.9.9").unwrap();
     let err = client.resolve_cudnn(&v, &linux(), 12).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("404"), "{msg}");
     assert!(msg.contains("redistrib_9.9.9.json"), "{msg}");
+}
+
+// ---- NCCL (spec §2.3: directory index, no manifest, no checksums) ----------
+
+const NCCL_INDEX_HTML: &str = r"<html><body>
+    <a href='..'>..</a>
+    <a href='New folder/'>New folder/</a>
+    <a href='v2.20.5/'>v2.20.5/</a>
+    <a href='v2.21.5/'>v2.21.5/</a>
+    <a href='v2.21.5/'>dup link</a>
+</body></html>";
+
+const NCCL_DIR_2215_HTML: &str = r"<html><body>
+    <a href='nccl_2.21.5-1+cuda11.0_x86_64.txz'>nccl_2.21.5-1+cuda11.0_x86_64.txz</a>
+    <a href='nccl_2.21.5-1+cuda12.2_x86_64.txz'>nccl_2.21.5-1+cuda12.2_x86_64.txz</a>
+    <a href='nccl_2.21.5-1+cuda12.4_x86_64.txz'>nccl_2.21.5-1+cuda12.4_x86_64.txz</a>
+    <a href='nccl_2.21.5-1+cuda12.4_aarch64.txz'>nccl_2.21.5-1+cuda12.4_aarch64.txz</a>
+</body></html>";
+
+fn nccl_client(server: &MockServer) -> DefaultRegistryClient {
+    DefaultRegistryClient::with_base_urls(
+        format!("{}/redist/", server.base_url()),
+        format!("{}/cudnn/", server.base_url()),
+        format!("{}/nccl/", server.base_url()),
+    )
+}
+
+#[test]
+fn list_nccl_scrapes_version_dirs_sorted_and_deduped() {
+    let server = MockServer::start();
+    let index = server.mock(|when, then| {
+        when.method(GET).path("/nccl/");
+        then.status(200).body(NCCL_INDEX_HTML);
+    });
+    let got = nccl_client(&server).list_nccl(&linux()).expect("lists");
+    index.assert();
+    let raws: Vec<&str> = got.iter().map(|v| v.raw.as_str()).collect();
+    assert_eq!(raws, ["2.20.5", "2.21.5"]);
+}
+
+#[test]
+fn resolve_nccl_picks_newest_cuda_minor_for_the_major_with_empty_sha() {
+    let server = MockServer::start();
+    let dir = server.mock(|when, then| {
+        when.method(GET).path("/nccl/v2.21.5/");
+        then.status(200).body(NCCL_DIR_2215_HTML);
+    });
+    let v = Version::parse("2.21.5").unwrap();
+    // cuda12 → newest cuda12.* (12.4 over 12.2), x86_64 over the aarch64 sibling.
+    let arts = nccl_client(&server)
+        .resolve_nccl(&v, &linux(), 12)
+        .expect("resolves");
+    dir.assert();
+    assert_eq!(arts.len(), 1);
+    assert_eq!(arts[0].component, "nccl");
+    assert_eq!(
+        arts[0].relative_path,
+        "v2.21.5/nccl_2.21.5-1+cuda12.4_x86_64.txz"
+    );
+    assert_eq!(
+        arts[0].url,
+        format!(
+            "{}/nccl/v2.21.5/nccl_2.21.5-1+cuda12.4_x86_64.txz",
+            server.base_url()
+        )
+    );
+    // The NCCL redist ships no checksums — the artifact sha is empty (self-recorded).
+    assert!(arts[0].sha256.is_empty(), "nccl sha must be self-recorded");
+}
+
+#[test]
+fn resolve_nccl_no_build_for_cuda_major_is_a_clear_error() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/nccl/v2.21.5/");
+        then.status(200).body(NCCL_DIR_2215_HTML);
+    });
+    let v = Version::parse("2.21.5").unwrap();
+    let err = nccl_client(&server)
+        .resolve_nccl(&v, &linux(), 13)
+        .unwrap_err();
+    assert!(err.to_string().contains("cuda13"), "{err}");
 }
