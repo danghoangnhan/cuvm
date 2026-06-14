@@ -916,7 +916,10 @@ fn cudnn_install_refuses_an_adopted_target() {
 
 #[cfg(unix)]
 #[test]
-fn cudnn_install_blocks_an_incompatible_pair() {
+fn cudnn_install_blocks_a_cuda_major_mismatch() {
+    // The realistic incompatible case: a cuDNN 8.x build (cuda11) against a
+    // CUDA-13 toolkit. The archive's own `_cuda11` build target disagrees with
+    // the toolkit's CUDA major, so the pairing is rejected up front.
     let home = TempDir::new().unwrap();
     let fixtures = TempDir::new().unwrap();
     seed_manifest(&home, "13.0.0", "downloaded", "versions/13.0.0");
@@ -925,6 +928,38 @@ fn cudnn_install_blocks_an_incompatible_pair() {
     let archive = fixtures
         .path()
         .join("cudnn-linux-x86_64-8.9.7.29_cuda11-archive.tar.xz");
+
+    cuvm()
+        .env("CUVM_HOME", home.path())
+        .args([
+            "cudnn",
+            "install",
+            archive.to_str().unwrap(),
+            "--for",
+            "13.0.0",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("cuda11 cuDNN build").and(contains("CUDA 13 toolkit")));
+    // The block fired before any store/link mutation.
+    home.child("versions/13.0.0/.cuvm-cudnn.json")
+        .assert(predicates::path::missing());
+}
+
+#[cfg(unix)]
+#[test]
+fn cudnn_install_blocks_a_mislabeled_archive_via_the_matrix() {
+    // Even when the archive name's `_cuda<major>` matches the toolkit (so the
+    // major guard passes), the §12 matrix still blocks a cuDNN line that does
+    // not support that CUDA major — here an 8.x cuDNN mislabeled as cuda13.
+    let home = TempDir::new().unwrap();
+    let fixtures = TempDir::new().unwrap();
+    seed_manifest(&home, "13.0.0", "downloaded", "versions/13.0.0");
+    home.child("versions/13.0.0/lib").create_dir_all().unwrap();
+    make_cudnn_tarxz(fixtures.path(), "8.9.7.29", 13);
+    let archive = fixtures
+        .path()
+        .join("cudnn-linux-x86_64-8.9.7.29_cuda13-archive.tar.xz");
 
     cuvm()
         .env("CUVM_HOME", home.path())

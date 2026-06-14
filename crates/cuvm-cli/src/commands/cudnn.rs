@@ -356,6 +356,19 @@ fn install_from_file(
              (expected cudnn-<platform>-<ver>_cuda<major>-archive.tar.xz/.zip)"
         )
     })?;
+    // The archive name carries its own `_cuda<major>` build target. The registry
+    // path can't disagree (it selects the variant BY the toolkit's major), but a
+    // user-supplied file can: a cuDNN 9.x build links against either CUDA 12 or
+    // 13, so validate_pair (which only checks line-vs-major support) would accept
+    // a cuda13 archive for a CUDA-12 toolkit. Reject the ABI mismatch outright.
+    let toolkit_major = target.toolkit_version.major();
+    if cuda_major != toolkit_major {
+        bail!(
+            "`{name}` is a cuda{cuda_major} cuDNN build but `{}` is a CUDA {toolkit_major} \
+             toolkit; pass the cuda{toolkit_major} archive instead",
+            target.handle,
+        );
+    }
     let verdict = engine.validate_pair(&target.toolkit_version, &version);
     if !verdict.ok {
         bail!("{}", verdict.reason);
@@ -470,10 +483,14 @@ pub fn run_cudnn_ls(inventory: &dyn Inventory, home: &Path) -> Result<()> {
     let manifest = inventory.load()?;
     let mut referenced: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut any = false;
+    // A bundle paired with a cuDNN whose sidecar we cannot read: we don't learn
+    // its store sha, so we must NOT later declare any payload "unreferenced"
+    // (the unreadable pairing could be the very one that references it).
+    let mut unreadable_pairing = false;
     for b in &manifest.bundles {
-        if b.cudnn.is_none() {
+        let Some(paired) = b.cudnn.as_deref() else {
             continue;
-        }
+        };
         let root = layout.resolve_record_path(&b.path);
         if let Some(rec) = cudnn_store::read_cudnn_meta(&root) {
             referenced.insert(rec.sha256.clone());
@@ -483,6 +500,14 @@ pub fn run_cudnn_ls(inventory: &dyn Inventory, home: &Path) -> Result<()> {
                 rec.cuda_major,
                 rec.sha256.get(..12).unwrap_or(&rec.sha256),
                 b.version
+            );
+            any = true;
+        } else {
+            unreadable_pairing = true;
+            eprintln!(
+                "cuvm: warning: {} is paired with cuDNN {paired} but its .cuvm-cudnn.json is \
+                 missing or unreadable; re-run `cuvm cudnn install <ver> --for {}` to repair",
+                b.version, b.version
             );
             any = true;
         }
@@ -495,7 +520,14 @@ pub fn run_cudnn_ls(inventory: &dyn Inventory, home: &Path) -> Result<()> {
             if name.starts_with('.') || referenced.contains(&name) {
                 continue;
             }
-            println!("{}  (unreferenced)", name.get(..12).unwrap_or(&name));
+            // Don't assert orphan-hood we can't prove: an unreadable pairing may
+            // reference this payload by a sha we couldn't read.
+            let tag = if unreadable_pairing {
+                "(orphan status unknown — a pairing's sidecar is unreadable)"
+            } else {
+                "(unreferenced)"
+            };
+            println!("{}  {tag}", name.get(..12).unwrap_or(&name));
             any = true;
         }
     }
