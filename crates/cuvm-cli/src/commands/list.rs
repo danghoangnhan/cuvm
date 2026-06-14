@@ -143,17 +143,21 @@ pub fn run_list(deps: &Deps, registry: &dyn RegistryClient, opts: &ListOpts) -> 
     Ok(())
 }
 
-/// `ls-remote --cudnn`: newest-first cuDNN versions from the cuDNN redist
-/// index. Live fetch only — no cache (D9): the flag is explicit network intent.
+/// `ls-remote --cudnn [<spec>]`: newest-first cuDNN versions from the cuDNN
+/// redist index, optionally filtered by an exact/minor/major prefix. Live fetch
+/// only — no cache (D9): the flag is explicit network intent.
 ///
 /// # Errors
 /// Returns an error if the cuDNN redist index cannot be fetched.
-pub fn run_list_cudnn_remote(registry: &dyn RegistryClient) -> Result<()> {
+pub fn run_list_cudnn_remote(registry: &dyn RegistryClient, spec: Option<&str>) -> Result<()> {
     let platform = current_platform();
     let mut versions = registry
         // 0 = no CUDA-major filter — the cuDNN index is platform/major-agnostic (D4).
         .list_cudnn(&platform, 0)
         .context("fetching the cuDNN redist index")?;
+    if let Some(spec) = spec {
+        versions.retain(|v| spec_matches(spec, v));
+    }
     versions.sort();
     for v in versions.iter().rev() {
         println!("{}", v.raw);

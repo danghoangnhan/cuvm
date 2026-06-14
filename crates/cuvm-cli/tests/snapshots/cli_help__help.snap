@@ -1,6 +1,5 @@
 ---
 source: crates/cuvm-cli/tests/cli_help.rs
-assertion_line: 26
 expression: stdout
 ---
 cuvm — a CUDA toolkit version manager (nvm for CUDA).
@@ -8,21 +7,24 @@ cuvm — a CUDA toolkit version manager (nvm for CUDA).
 Usage: cuvm [COMMAND]
 
 Commands:
-  adopt      Discover and register existing CUDA toolkits in place
-  ls         List installed and available CUDA toolkits (installed + `<download available>`)
-  ls-remote  List toolkit versions available in the remote registry (alias for `ls --only-downloads`)
-  install    Download and install one or more CUDA toolkit versions
-  cudnn      Manage cuDNN payloads paired with installed toolkits
-  current    Print the currently active bundle handle
-  which      Print the absolute toolkit root for a spec
-  use        Print env-activation code for a spec (shim evals it)
-  default    Set the persistent default (writes the `default` alias)
-  alias      Create or update an alias
-  unalias    Remove an alias
-  pin        Write `.cuda-version` in the current directory
-  doctor     Diagnose driver/toolkit/PATH health; exit code is machine-readable
-  uninstall  De-register a bundle (adopted installs are not deleted — ADR-005)
-  help       Print this message or the help of the given subcommand(s)
+  adopt        Discover and register existing CUDA toolkits in place
+  ls           List installed and available CUDA toolkits (installed + `<download available>`)
+  ls-remote    List toolkit versions available in the remote registry (alias for `ls --only-downloads`)
+  install      Download and install one or more CUDA toolkit versions
+  cudnn        Manage cuDNN payloads paired with installed toolkits
+  current      Print the currently active bundle handle
+  which        Print the absolute toolkit root for a spec
+  use          Print env-activation code for a spec (shim evals it)
+  exec         Run a command with a toolkit activated (`cuvm exec <spec> -- <cmd> …`)
+  shell        Launch a subshell with a toolkit activated (exit the shell to return)
+  default      Set the persistent default (writes the `default` alias)
+  alias        Create or update an alias
+  unalias      Remove an alias
+  pin          Write `.cuda-version` in the current directory
+  doctor       Diagnose driver/toolkit/PATH health; exit code is machine-readable
+  uninstall    De-register a bundle (adopted installs are not deleted — ADR-005)
+  completions  Generate a shell completion script (bash/zsh/fish/powershell/elvish)
+  help         Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

@@ -2,15 +2,18 @@
 
 pub mod adopt;
 pub mod alias;
+pub mod completions;
 pub mod cudnn;
 pub mod current;
 pub mod default;
 pub mod doctor;
 pub mod env;
+pub mod exec;
 pub mod hook;
 pub mod install;
 pub mod list;
 pub mod pin;
+pub mod shell;
 pub mod r#use;
 pub mod which;
 
@@ -163,9 +166,21 @@ pub enum Command {
     ///
     /// With `--cudnn`, lists cuDNN redist versions instead.
     LsRemote {
+        /// Optional version filter (exact/minor/major prefix).
+        spec: Option<String>,
         /// List cuDNN versions from the cuDNN redist instead of toolkits.
-        #[arg(long)]
+        ///
+        /// The cuDNN listing is always all-versions and carries no redist-URL
+        /// column, so it conflicts with `--all-versions`/`--show-urls` rather
+        /// than silently ignoring them.
+        #[arg(long, conflicts_with_all = ["all_versions", "show_urls"])]
         cudnn: bool,
+        /// Include old patch releases (default collapses to the newest patch per minor).
+        #[arg(long)]
+        all_versions: bool,
+        /// Show each row's redist URL instead of `<download available>`.
+        #[arg(long)]
+        show_urls: bool,
     },
     /// Download and install one or more CUDA toolkit versions.
     Install {
@@ -200,6 +215,19 @@ pub enum Command {
     Which(WhichArgs),
     /// Print env-activation code for a spec (shim evals it).
     Use(UseArgs),
+    /// Run a command with a toolkit activated (`cuvm exec <spec> -- <cmd> …`).
+    Exec {
+        /// Version spec to activate (exact/minor/major/latest/alias).
+        spec: String,
+        /// The command and arguments to run, given after `--`.
+        #[arg(last = true, value_name = "CMD")]
+        command: Vec<String>,
+    },
+    /// Launch a subshell with a toolkit activated (exit the shell to return).
+    Shell {
+        /// Optional spec; omitted => resolve from .cuda-version / default.
+        spec: Option<String>,
+    },
     /// Set the persistent default (writes the `default` alias).
     Default(DefaultArgs),
     /// Create or update an alias.
@@ -214,6 +242,12 @@ pub enum Command {
     Uninstall {
         /// Version handle to deregister (e.g. `12.4`).
         spec: String,
+    },
+    /// Generate a shell completion script (bash/zsh/fish/powershell/elvish).
+    Completions {
+        /// Target shell for the completion script.
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
     },
     /// Print cd-autoload hook glue for the given shell (shim-only).
     #[command(hide = true)]
@@ -305,20 +339,25 @@ impl Command {
                 )?;
                 Ok(0)
             }
-            Command::LsRemote { cudnn } => {
+            Command::LsRemote {
+                spec,
+                cudnn,
+                all_versions,
+                show_urls,
+            } => {
                 let registry = build_registry();
                 if cudnn {
-                    list::run_list_cudnn_remote(registry.as_ref())?;
+                    list::run_list_cudnn_remote(registry.as_ref(), spec.as_deref())?;
                 } else {
                     list::run_list(
                         deps,
                         registry.as_ref(),
                         &list::ListOpts {
-                            spec: None,
+                            spec,
                             only_installed: false,
                             only_downloads: true,
-                            all_versions: false,
-                            show_urls: false,
+                            all_versions,
+                            show_urls,
                             refresh: false,
                             json: false,
                         },
@@ -388,6 +427,8 @@ impl Command {
                 r#use::run(deps, a.spec.as_deref(), a.shell.into())?;
                 Ok(0)
             }
+            Command::Exec { spec, command } => exec::run(deps, &spec, &command),
+            Command::Shell { spec } => shell::run(deps, spec.as_deref()),
             Command::Default(a) => {
                 default::run(deps, &a.spec, a.link)?;
                 Ok(0)
@@ -407,6 +448,10 @@ impl Command {
             Command::Doctor => doctor::run(deps),
             Command::Uninstall { spec } => {
                 install::run_uninstall(deps.inventory.as_ref(), &deps.home, &spec)?;
+                Ok(0)
+            }
+            Command::Completions { shell } => {
+                completions::run(shell)?;
                 Ok(0)
             }
             Command::Hook { shell, os } => {

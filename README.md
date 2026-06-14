@@ -5,12 +5,17 @@
 per-shell, with no root and zero runtime dependencies. Linux / WSL **and**
 Windows.
 
-> **Status — Milestone 3.** cuDNN pairing shipped: `install` pairs each
-> toolkit with a matching cuDNN via EULA-gated auto-download from NVIDIA's
-> account-free cuDNN redist, and user-supplied archives can always be
-> ingested instead. Payloads live in a content-addressed store
+> **Status — Milestone 4 (in progress).** Activation polish has landed:
+> `cuvm exec <spec> -- <cmd>` runs a one-off command with a toolkit active,
+> `cuvm shell <spec>` drops into a subshell with it active, `cuvm completions
+> <shell>` emits shell completions, and `ls-remote` takes a version filter plus
+> `--all-versions`/`--show-urls`. Built on M3's cuDNN pairing: `install` pairs
+> each toolkit with a matching cuDNN via EULA-gated auto-download from NVIDIA's
+> account-free cuDNN redist (user-supplied archives can always be ingested
+> instead), payloads live in a content-addressed store
 > (`~/.cuvm/cudnn/<sha256>/`) linked into the toolkit tree, and `doctor`
-> validates the toolkit↔cuDNN pairing.
+> validates the toolkit↔cuDNN pairing. NCCL companion libs are the remaining M4
+> work.
 
 ## Install
 
@@ -61,13 +66,17 @@ cuvm adopt --scan                 # discover & adopt /usr/local/cuda-* installs
 cuvm ls                           # installed toolkits + `<download available>`
 cuvm ls --output-format json      # the same list, machine-readable
 cuvm ls-remote                    # downloadable versions (alias: ls --only-downloads)
+cuvm ls-remote 12.4 --all-versions   # filter remote versions; show every patch
 cuvm ls-remote --cudnn            # downloadable cuDNN versions
 cuvm use 12.4                     # activate in the current shell
+cuvm exec 12.4 -- nvcc --version  # run one command with 12.4 active (no shell switch)
+cuvm shell 12.4                   # drop into a subshell with 12.4 active (exit to return)
 cuvm default 12.6                 # set the persistent default
 cuvm pin 12.4                     # write .cuda-version in the current dir
 cuvm which 12.4                   # print a toolkit's absolute root
 cuvm doctor                       # diagnose driver/toolkit/PATH health
 cuvm uninstall 12.4.1             # remove a toolkit (exact handle, see cuvm ls)
+cuvm completions zsh              # print a shell completion script (bash/zsh/fish/pwsh/elvish)
 ```
 
 `install` is idempotent — re-running it on an installed version is a no-op
@@ -81,8 +90,13 @@ cuDNN auto-download is gated behind a one-time acceptance of the NVIDIA cuDNN
 EULA — pass `--accept-eula` or answer the interactive prompt once, and the
 acceptance is recorded under `~/.cuvm/eula/`. User-supplied archives
 (`cuvm cudnn install ./cudnn-*.tar.xz --for …`) are always accepted, with no
-network access required. NCCL pairing, `exec`/`shell`, and shell completions
-land in M4.
+network access required.
+
+`exec`/`shell` apply the same per-shell activation as `use` (strip the prior
+`CUVM_INJECTED` breadcrumb, then prepend the toolkit's `bin`/`lib64`) directly
+to a child process, so a one-off command or subshell gets an activated CUDA
+environment without touching the parent shell. NCCL companion-lib pairing is the
+remaining M4 work.
 
 ## Building from source
 
