@@ -10,6 +10,7 @@ pub mod inventory;
 pub mod layout;
 pub mod manifest_io;
 pub mod meta_io;
+pub mod nccl_store;
 pub mod redist_cache;
 
 pub use atomic::write_atomic;

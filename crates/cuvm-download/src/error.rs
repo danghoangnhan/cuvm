@@ -36,6 +36,20 @@ pub enum DownloadError {
         actual: String,
     },
 
+    /// A no-checksum download's byte count disagreed with the server's
+    /// `Content-Length`. This is the only integrity signal available for the
+    /// NCCL redist (which publishes no sha256); a truncated body is rejected
+    /// and nothing is kept.
+    #[error("size mismatch for {file_name}: expected {expected} bytes, got {actual}")]
+    SizeMismatch {
+        /// The cache file name whose length failed to match.
+        file_name: String,
+        /// The byte count promised by `Content-Length`.
+        expected: u64,
+        /// The byte count actually written.
+        actual: u64,
+    },
+
     /// A filesystem error while reading, writing, or renaming a cache file.
     #[error("io error for {path}: {source}")]
     Io {
@@ -64,6 +78,18 @@ mod tests {
         let msg = e.to_string();
         assert!(msg.contains("cuda_nvcc.tar.xz"), "{msg}");
         assert!(msg.contains("aaaa") && msg.contains("bbbb"), "{msg}");
+    }
+
+    #[test]
+    fn size_mismatch_renders_both_counts_and_the_file() {
+        let e = DownloadError::SizeMismatch {
+            file_name: "nccl_2.21.5-1+cuda12.4_x86_64.txz".into(),
+            expected: 9999,
+            actual: 20,
+        };
+        let msg = e.to_string();
+        assert!(msg.contains("nccl_2.21.5-1+cuda12.4_x86_64.txz"), "{msg}");
+        assert!(msg.contains("9999") && msg.contains("20"), "{msg}");
     }
 
     #[test]

@@ -73,6 +73,12 @@ impl Layout {
         self.root.join("cudnn")
     }
 
+    /// Path to the NCCL content store: `$CUVM_HOME/nccl`.
+    #[must_use]
+    pub fn nccl_dir(&self) -> PathBuf {
+        self.root.join("nccl")
+    }
+
     /// Path to the recorded EULA acknowledgements (spec §6: `eula/`).
     #[must_use]
     pub fn eula_dir(&self) -> PathBuf {

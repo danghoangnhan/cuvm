@@ -25,7 +25,7 @@ pub use env_plan::plan_for;
 pub use envplan::EnvPlan;
 pub use error::{CompatError, CoreError, CoreResult};
 pub use manifest::{
-    BundleRecord, CudnnRecord, DriverRecord, Manifest, VersionMeta, SCHEMA_VERSION,
+    BundleRecord, CudnnRecord, DriverRecord, Manifest, NcclRecord, VersionMeta, SCHEMA_VERSION,
 };
 pub use process_env::{process_env, EnvVar};
 pub use version::Version;

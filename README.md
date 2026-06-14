@@ -60,6 +60,9 @@ cuvm install -r 12.4              # reinstall even if present (replace the exist
 cuvm install 12.4 --accept-eula   # toolkit + paired cuDNN (EULA recorded once)
 cuvm cudnn install 9.8 --for 12.4.1            # pair/retrofit a specific cuDNN
 cuvm cudnn install ./cudnn-*.tar.xz --for 12.4.1   # air-gapped: ingest a local archive
+cuvm nccl install 2.21 --for 12.4.1            # pair a compatible NCCL (BSD; no EULA)
+cuvm nccl install ./nccl_*.txz --for 12.4.1   # air-gapped: ingest a local NCCL archive
+cuvm nccl ls                      # NCCL payloads in the content store
 cuvm cudnn ls                     # cuDNN payloads in the content store
 cuvm adopt /usr/local/cuda-12.4   # register an existing toolkit in place
 cuvm adopt --scan                 # discover & adopt /usr/local/cuda-* installs
@@ -96,10 +99,13 @@ network access required.
 `exec`/`shell` apply the same per-shell activation as `use` (strip the prior
 `CUVM_INJECTED` breadcrumb, then prepend the toolkit's `bin`/`lib64`) directly
 to a child process, so a one-off command or subshell gets an activated CUDA
-environment without touching the parent shell. NCCL discovery has landed
-(`cuvm ls-remote --nccl`, sourced from NVIDIA's account-free NCCL redist, which
-ships no manifest or checksums — cuvm self-records each archive's sha256);
-`cuvm nccl install` pairing is the remaining M4 work.
+environment without touching the parent shell. NCCL companion pairing has
+landed (`cuvm nccl install <ver|file> --for <toolkit>`): cuvm picks the build
+for the toolkit's CUDA major from NVIDIA's account-free NCCL redist — which
+ships no manifest or checksums, so cuvm self-records each archive's sha256 into
+a content-addressed store and links the full `libnccl*` set into the toolkit.
+NCCL is BSD-licensed, so no EULA gate. The integration/smoke harness is the
+remaining M4 work.
 
 ## Building from source
 
