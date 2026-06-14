@@ -116,6 +116,28 @@ pub struct Companion {
     pub sha256: String,
 }
 
+/// The optional CUDA math-library components, requestable at install time via
+/// `cuvm install <spec> --with <comp,…>` (spec §2.1, "Recommended set + math
+/// libs on request"). They ship in the SAME toolkit `redistrib_<ver>.json` as the
+/// recommended set — each carrying its own sha256 — so they ride the normal
+/// resolve→verify→extract→place pipeline into the toolkit root and are surfaced
+/// read-only as [`Bundle::extra`] companions afterward.
+pub const MATH_LIB_COMPONENTS: &[&str] = &[
+    "libcublas",
+    "libcufft",
+    "libcurand",
+    "libcusolver",
+    "libcusparse",
+    "libnpp",
+    "libnvjitlink",
+];
+
+/// True when `component` is one of the [`MATH_LIB_COMPONENTS`] math libs.
+#[must_use]
+pub fn is_math_lib(component: &str) -> bool {
+    MATH_LIB_COMPONENTS.contains(&component)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bundle {
     pub toolkit: Toolkit,

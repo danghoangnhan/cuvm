@@ -40,6 +40,27 @@ impl FsInventory {
             installed_at: rec.installed_at,
             checksum: rec.sha256.clone(),
         };
+        // The `--with` math libs (WU-20c) merge into the toolkit root and are
+        // recorded verbatim in `components`; surface them read-only as `extra`
+        // companions by partitioning on the math-lib allowlist. Computed before
+        // the struct literal so it can borrow `toolkit` before the move below.
+        //
+        // sha256 is intentionally empty: the libs ARE sha256-verified against the
+        // redist manifest at install time, but cuvm does not persist a per-
+        // component digest (the manifest's bundle-level `sha256` is the toolkit's,
+        // not a math lib's — conflating them would be wrong). The slot is read-only
+        // surfacing; per-component integrity tracking is a deliberate non-goal here.
+        let extra: Vec<cuvm_core::Companion> = rec
+            .components
+            .iter()
+            .filter(|c| cuvm_core::is_math_lib(c))
+            .map(|name| cuvm_core::Companion {
+                name: name.clone(),
+                version: toolkit.version.clone(),
+                store: toolkit.root.clone(),
+                sha256: String::new(),
+            })
+            .collect();
         Ok(Bundle {
             // Hydrated first: this closure borrows `toolkit.root`, and the
             // `toolkit` field below moves `toolkit` into the Bundle.
@@ -56,7 +77,7 @@ impl FsInventory {
                 })
             }),
             toolkit,
-            extra: Vec::new(),
+            extra,
         })
     }
 }
@@ -260,6 +281,42 @@ mod tests {
         inventory.save(&m).unwrap();
         let bundles = inventory.list().unwrap();
         assert!(bundles[0].cudnn.is_none());
+    }
+
+    #[test]
+    fn math_lib_components_hydrate_into_bundle_extra() {
+        let (_d, inv) = inv();
+        let mut m = Manifest::default();
+        let mut rec = downloaded_record("12.4.1");
+        // The `--with` set is recorded verbatim in `components` alongside the base set.
+        rec.components = vec!["cuda_nvcc".into(), "libcublas".into(), "libcufft".into()];
+        // A toolkit-level checksum must NOT leak into a per-component companion.
+        rec.sha256 = Some("deadbeef".into());
+        m.bundles.push(rec);
+        inv.save(&m).unwrap();
+
+        let bundles = inv.list().unwrap();
+        let b = &bundles[0];
+        // toolkit.components keeps the full resolved set unchanged...
+        assert!(b.toolkit.components.contains(&"cuda_nvcc".to_string()));
+        assert!(b.toolkit.components.contains(&"libcublas".to_string()));
+        // ...and only the math libs surface as read-only `extra` companions.
+        let names: Vec<&str> = b.extra.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["libcublas", "libcufft"]);
+        let cublas = &b.extra[0];
+        assert_eq!(cublas.version, b.toolkit.version);
+        assert_eq!(cublas.store, b.toolkit.root);
+        // No per-component digest is persisted; the toolkit-level sha is not reused.
+        assert!(cublas.sha256.is_empty());
+    }
+
+    #[test]
+    fn no_math_libs_hydrates_an_empty_extra() {
+        let (_d, inv) = inv();
+        let mut m = Manifest::default();
+        m.bundles.push(downloaded_record("12.4.1")); // components = [cuda_nvcc]
+        inv.save(&m).unwrap();
+        assert!(inv.list().unwrap()[0].extra.is_empty());
     }
 
     #[test]

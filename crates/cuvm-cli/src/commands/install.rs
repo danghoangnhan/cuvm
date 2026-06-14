@@ -124,8 +124,23 @@ pub fn run_install(
     specs: &[String],
     reinstall: bool,
     force: bool,
+    with: &[String],
     cudnn_opts: &CudnnOpts,
 ) -> Result<i32> {
+    // Validate `--with` once, up front: only the known math libs are accepted, so
+    // a typo fails fast (and clearly) instead of surfacing as a download miss.
+    if let Some(bad) = with.iter().find(|n| !cuvm_core::is_math_lib(n.as_str())) {
+        anyhow::bail!(
+            "`--with {bad}` is not a known CUDA math library; choose from: {}",
+            cuvm_core::MATH_LIB_COMPONENTS.join(", ")
+        );
+    }
+    let with_suffix = if with.is_empty() {
+        String::new()
+    } else {
+        format!("  (+ {})", with.join(", "))
+    };
+
     let started = std::time::Instant::now();
     let mut changed: Vec<String> = Vec::new();
     let mut failed = 0usize;
@@ -141,14 +156,15 @@ pub fn run_install(
             spec,
             reinstall,
             force,
+            with,
             cudnn_opts,
         ) {
             Ok(InstallOutcome::Installed { handle, path }) => {
-                println!("+ cuda {handle}  ->  {}", path.display());
+                println!("+ cuda {handle}  ->  {}{with_suffix}", path.display());
                 changed.push(handle);
             }
             Ok(InstallOutcome::Reinstalled { handle, path }) => {
-                println!("~ cuda {handle}  ->  {}", path.display());
+                println!("~ cuda {handle}  ->  {}{with_suffix}", path.display());
                 changed.push(handle);
             }
             #[cfg(not(unix))]
@@ -209,6 +225,7 @@ fn install_one(
     spec: &str,
     reinstall: bool,
     force: bool,
+    with: &[String],
     cudnn_opts: &CudnnOpts,
 ) -> Result<InstallOutcome> {
     let platform = current_platform();
@@ -253,8 +270,15 @@ fn install_one(
         anyhow::bail!("{reason}\nhint: {hint}");
     }
 
-    // 3. Resolve component artifacts and build the acquire plan.
-    let artifacts = registry.resolve_toolkit(&want, &platform, &ComponentPolicy::Recommended)?;
+    // 3. Resolve component artifacts and build the acquire plan. `--with` math
+    // libs (WU-20c) ride the same pipeline via RecommendedPlus, which keeps the
+    // version-branched recommended baseline and appends the requested extras.
+    let policy = if with.is_empty() {
+        ComponentPolicy::Recommended
+    } else {
+        ComponentPolicy::RecommendedPlus(with.to_vec())
+    };
+    let artifacts = registry.resolve_toolkit(&want, &platform, &policy)?;
     let handle = want.raw.clone();
     let plan = AcquirePlan {
         artifacts,
@@ -273,6 +297,7 @@ fn install_one(
             installer,
             inventory,
             &handle,
+            with,
             &format!("no windows-x86_64 redist components resolved for {handle}"),
         );
     }
@@ -284,6 +309,7 @@ fn install_one(
                 installer,
                 inventory,
                 &handle,
+                with,
                 &format!("windows download blocked, degrading to adopt-only: {e}"),
             );
         }
@@ -406,9 +432,20 @@ fn degrade_to_adopt(
     installer: &dyn Installer,
     inventory: &dyn Inventory,
     handle: &str,
+    with: &[String],
     reason: &str,
 ) -> Result<InstallOutcome> {
     eprintln!("cuvm: warning: {reason}; falling back to adopt-only.");
+    // The adopt fallback downloads nothing, so any requested `--with` math libs
+    // were NOT installed — say so rather than silently dropping the flag (and the
+    // adopted change-line deliberately omits the `(+ …)` suffix for the same
+    // reason: it would falsely claim libs that never landed).
+    if !with.is_empty() {
+        eprintln!(
+            "cuvm: note: requested math libs ({}) were not installed on the adopt fallback.",
+            with.join(", ")
+        );
+    }
     let candidates = installer.scan()?;
     let candidate = candidates
         .into_iter()

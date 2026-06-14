@@ -18,8 +18,8 @@ pub mod version;
 pub use candidate::Candidate;
 pub use compat::{CompatLookupError, CompatOutcome, CompatSeverity, DefaultCompatEngine};
 pub use domain::{
-    current_platform, Alias, Arch, Bundle, Companion, Cudnn, Driver, GpuClass, Os, Pin, Platform,
-    Shell, Source, Toolkit,
+    current_platform, is_math_lib, Alias, Arch, Bundle, Companion, Cudnn, Driver, GpuClass, Os,
+    Pin, Platform, Shell, Source, Toolkit, MATH_LIB_COMPONENTS,
 };
 pub use env_plan::plan_for;
 pub use envplan::EnvPlan;
