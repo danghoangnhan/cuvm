@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Rust dependencies (the workspace Cargo.toml / Cargo.lock).
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      # One PR for routine patch/minor bumps instead of a swarm.
+      cargo-minor:
+        update-types: [minor, patch]
+
+  # The pinned actions in .github/workflows/*.yml.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

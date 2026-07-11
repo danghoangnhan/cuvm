@@ -37,7 +37,7 @@ build-linux-amd64:
     cargo zigbuild -p cuvm-cli --release --target x86_64-unknown-linux-musl
 
 build-linux-arm64:
-    cargo zigbuild -p cuvm-cli --release --target aarch64-unknown-linux-gnu
+    cargo zigbuild -p cuvm-cli --release --target aarch64-unknown-linux-musl
 
 build-windows-amd64:
     cargo zigbuild -p cuvm-cli --release --target x86_64-pc-windows-gnu

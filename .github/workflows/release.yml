@@ -5,16 +5,31 @@ on:
     tags:
       - 'v*.*.*'
 
+# Least-privilege default for the test/build jobs; publish widens its own scope.
 permissions:
-  contents: write # create the GitHub Release + upload assets
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # A tag push does NOT trigger ci.yml (it is branches/PR-only), so gate the
+  # release on the test suite here — without this a tag on a red commit ships.
+  test:
+    name: test gate (linux/amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+
   build:
     name: build ${{ matrix.name }}
+    needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -24,7 +39,7 @@ jobs:
             bin: cuvm
             archive: tar.gz
           - name: linux-arm64
-            target: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-musl
             bin: cuvm
             archive: tar.gz
           - name: windows-amd64
@@ -33,6 +48,17 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@v4
+      - name: Assert tag matches workspace version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `[workspace.package] version` is the only line-anchored `version = ` in
+          # the root manifest (dep versions are inline inside `{ … }`).
+          manifest_ver="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          if [ "v${manifest_ver}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match Cargo.toml version v${manifest_ver} — bump the workspace version before tagging."
+            exit 1
+          fi
       - name: Install Rust (stable + target)
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -79,6 +105,10 @@ jobs:
     name: publish release
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the release + upload assets
+      id-token: write # keyless cosign signing via GitHub OIDC
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -92,6 +122,23 @@ jobs:
           cd dist
           sha256sum cuvm-*.tar.gz cuvm-*.zip > SHA256SUMS
           cat SHA256SUMS
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign SHA256SUMS (keyless, Sigstore)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # One signature over SHA256SUMS authenticates every artifact it lists.
+          # Keyless: no stored key — signs with the workflow's GitHub OIDC identity
+          # (logged in Rekor). Verify a download with:
+          #   cosign verify-blob --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
+          #     --certificate-identity-regexp 'https://github.com/danghoangnhan/cuvm/.+' \
+          #     --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+          cd dist
+          cosign sign-blob --yes \
+            --output-signature SHA256SUMS.sig \
+            --output-certificate SHA256SUMS.pem \
+            SHA256SUMS
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -102,3 +149,5 @@ jobs:
             dist/cuvm-*.tar.gz
             dist/cuvm-*.zip
             dist/SHA256SUMS
+            dist/SHA256SUMS.sig
+            dist/SHA256SUMS.pem
