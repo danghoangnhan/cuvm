@@ -17,7 +17,7 @@ edition = "2021"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/danghoangnhan/cvm"
-description = "nvm for CUDA toolkits"
+description = "A version manager for CUDA toolkits"
 
 [workspace.lints.clippy]
 all = "warn"

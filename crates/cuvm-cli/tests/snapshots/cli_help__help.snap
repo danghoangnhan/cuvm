@@ -2,7 +2,7 @@
 source: crates/cuvm-cli/tests/cli_help.rs
 expression: stdout
 ---
-cuvm — a CUDA toolkit version manager (nvm for CUDA).
+cuvm — a CUDA toolkit version manager.
 
 Usage: cuvm [COMMAND]
 
