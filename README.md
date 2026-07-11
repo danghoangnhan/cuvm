@@ -42,12 +42,6 @@ Full docs live in the **[wiki](https://github.com/danghoangnhan/cuvm/wiki)**:
 - **[Companion libraries](https://github.com/danghoangnhan/cuvm/wiki/Companion-Libraries)** — cuDNN, NCCL, cuBLAS math libs
 - **[Building from source](https://github.com/danghoangnhan/cuvm/wiki/Building-from-Source)** — native + cross-compile
 
-## Status
-
-Milestones **M1–M4 shipped** — switch core, install/download, cuDNN bundling, and
-companion libs + polish. Progress is tracked on the
-[Milestones](https://github.com/danghoangnhan/cuvm/milestones) board.
-
 ## License
 
 Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at
