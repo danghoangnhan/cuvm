@@ -9,7 +9,7 @@ use cuvm_core::{Os, Shell};
 ///
 /// - `spec == None | ""  | "."` → resolve from cwd (`.cuda-version` upward walk,
 ///   then fall back to the persistent `default` alias so leaving a pinned dir
-///   restores the default toolkit — mirrors nvm `load-nvmrc`).
+///   restores the default toolkit).
 /// - Any other spec → resolve that spec directly.
 /// - When nothing resolves (no pin, no default) → emit a deactivate script.
 ///
@@ -25,7 +25,7 @@ pub fn run(resolver: &dyn Resolver, spec: Option<&str>, shell: Shell, os: Os) ->
             match resolver.resolve_from_dir(&cwd)? {
                 Some(r) => Some(r),
                 // No .cuda-version in scope: fall back to the persistent default
-                // so leaving a pinned dir reverts (nvm load-nvmrc behavior).
+                // so leaving a pinned dir reverts to the default toolkit.
                 None => resolver.resolve("default").ok(),
             }
         }

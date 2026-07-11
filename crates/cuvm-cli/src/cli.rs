@@ -5,12 +5,12 @@ use clap::Parser;
 
 use crate::commands::Command;
 
-/// cuvm — a CUDA toolkit version manager (nvm for CUDA).
+/// cuvm — a CUDA toolkit version manager.
 #[derive(Debug, Parser)]
 #[command(
     name = "cuvm",
     version,
-    about = "cuvm — a CUDA toolkit version manager (nvm for CUDA).",
+    about = "cuvm — a CUDA toolkit version manager.",
     long_about = None
 )]
 pub struct Cli {

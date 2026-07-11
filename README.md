@@ -1,6 +1,6 @@
-# cuvm — nvm for CUDA
+# cuvm — a version manager for CUDA
 
-`cuvm` is an [nvm](https://github.com/nvm-sh/nvm)-style version manager for the
+`cuvm` is a per-shell version manager for the
 **CUDA toolkit** (plus cuDNN, NCCL, and cuBLAS math libs). Install, switch, and
 pin multiple CUDA toolkits per-shell — no root, zero runtime dependencies, on
 Linux / WSL **and** Windows.
