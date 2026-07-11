@@ -613,7 +613,7 @@ dependencies = [
 
 [[package]]
 name = "cuvm-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "assert_fs",
@@ -627,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "cuvm-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -655,7 +655,7 @@ dependencies = [
 
 [[package]]
 name = "cuvm-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
  "serde",
@@ -666,7 +666,7 @@ dependencies = [
 
 [[package]]
 name = "cuvm-download"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "assert_fs",
  "cuvm-core",
@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "cuvm-nvidia"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "cuvm-app",
@@ -693,7 +693,7 @@ dependencies = [
 
 [[package]]
 name = "cuvm-platform"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "assert_fs",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "cuvm-registry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "cuvm-app",
@@ -725,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "cuvm-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "assert_fs",
