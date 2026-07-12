@@ -10,7 +10,7 @@
 #   CUVM_DOWNLOAD_BASE   release-asset base URL (default: GitHub releases; override for a mirror)
 
 $ErrorActionPreference = 'Stop'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocol]::Tls12
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Repo     = 'danghoangnhan/cuvm'
 $Releases = "https://github.com/$Repo/releases"
