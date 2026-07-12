@@ -16,6 +16,6 @@ pub mod progress;
 
 pub use download::{sha256_file, Downloader};
 pub use error::{DownloadError, Result};
-pub use extract::{extract_tar_xz, extract_zip, strip_wrapper_dir, ExtractError};
+pub use extract::{extract_tar_gz, extract_tar_xz, extract_zip, strip_wrapper_dir, ExtractError};
 pub use http::http_get;
 pub use progress::{silent, ProgressReporter, Reporter, SilentReporter};

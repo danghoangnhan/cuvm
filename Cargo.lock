@@ -658,6 +658,7 @@ version = "0.2.0"
 dependencies = [
  "assert_fs",
  "cuvm-core",
+ "flate2",
  "httpmock",
  "lzma-rs",
  "sha2",

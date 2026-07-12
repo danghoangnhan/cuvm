@@ -112,6 +112,41 @@ pub fn extract_tar_xz(archive: &Path, dest: &Path) -> Result<(), ExtractError> {
     Ok(())
 }
 
+/// Decode a `.tar.gz` (pure-Rust gzip via `flate2`/`miniz_oxide`) and unpack it
+/// into `dest`. The gzip sibling of [`extract_tar_xz`]: same [`safe_join`]
+/// zip-slip guard, same directory creation. Our release archives ship as
+/// `.tar.gz` (see `install.sh`), so `cuvm self update` reads its own release
+/// through this path.
+///
+/// # Errors
+/// Returns [`ExtractError::Io`] on a gzip-decode or filesystem failure, or
+/// [`ExtractError::ZipSlip`] if any entry escapes `dest`.
+pub fn extract_tar_gz(archive: &Path, dest: &Path) -> Result<(), ExtractError> {
+    let file = fs::File::open(archive)?;
+    let decoder = flate2::read::GzDecoder::new(file);
+
+    fs::create_dir_all(dest)?;
+    let mut tar = tar::Archive::new(decoder);
+    for entry in tar.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?;
+        let rel = path.to_string_lossy().into_owned();
+        let target = safe_join(dest, &rel)?;
+
+        if entry.header().entry_type().is_dir() {
+            fs::create_dir_all(&target)?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes)?;
+        fs::write(&target, &bytes)?;
+    }
+    Ok(())
+}
+
 /// Unpack a `.zip` into `dest` using the `zip` crate.
 ///
 /// Every entry is routed through [`safe_join`] (not the archive's own
@@ -256,6 +291,93 @@ mod tar_xz_tests {
         extract_tar_xz(&archive, &dest).unwrap();
 
         assert!(dest.join("include/cuda.h").is_file());
+    }
+}
+
+#[cfg(test)]
+mod tar_gz_tests {
+    use super::*;
+    use std::io::{Cursor, Write};
+    use tempfile::tempdir;
+
+    /// Build a `.tar.gz` in memory from `(path, bytes)` entries, write it to `at`.
+    #[allow(clippy::cast_possible_truncation)]
+    fn write_tar_gz(at: &Path, entries: &[(&str, &[u8])]) {
+        let mut tar_buf = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_buf);
+            for (name, data) in entries {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(data.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, name, Cursor::new(*data))
+                    .unwrap();
+            }
+            builder.finish().unwrap();
+        }
+        let file = fs::File::create(at).unwrap();
+        let mut enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        enc.write_all(&tar_buf).unwrap();
+        enc.finish().unwrap();
+    }
+
+    #[test]
+    fn extracts_the_release_binary_from_a_tar_gz() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("cuvm-1.0.0-linux-amd64.tar.gz");
+        write_tar_gz(
+            &archive,
+            &[
+                ("cuvm-1.0.0-linux-amd64/cuvm", b"#!/bin/sh\necho hi\n"),
+                ("cuvm-1.0.0-linux-amd64/shims/cuvm.sh", b"# shim\n"),
+            ],
+        );
+
+        let dest = dir.path().join("out");
+        extract_tar_gz(&archive, &dest).unwrap();
+
+        assert_eq!(
+            std::fs::read(dest.join("cuvm-1.0.0-linux-amd64/cuvm")).unwrap(),
+            b"#!/bin/sh\necho hi\n"
+        );
+        assert!(dest.join("cuvm-1.0.0-linux-amd64/shims/cuvm.sh").is_file());
+    }
+
+    #[test]
+    fn rejects_parent_traversal() {
+        // A `..` entry must be refused by the shared safe_join guard, exactly as
+        // for the tar.xz path — no file lands outside `dest`.
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("evil.tar.gz");
+        let mut tar_buf = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_buf);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(5);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            header
+                .as_gnu_mut()
+                .unwrap()
+                .name
+                .get_mut(..13)
+                .unwrap()
+                .copy_from_slice(b"../escape.txt");
+            header.set_cksum();
+            builder.append(&header, Cursor::new(&b"pwned"[..])).unwrap();
+            builder.finish().unwrap();
+        }
+        let file = fs::File::create(&archive).unwrap();
+        let mut enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        enc.write_all(&tar_buf).unwrap();
+        enc.finish().unwrap();
+
+        let dest = dir.path().join("out");
+        let err = extract_tar_gz(&archive, &dest).unwrap_err();
+        assert!(matches!(err, ExtractError::ZipSlip { .. }), "{err:?}");
+        assert!(!dir.path().join("escape.txt").exists());
     }
 }
 
