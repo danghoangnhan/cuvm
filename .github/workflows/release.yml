@@ -140,7 +140,7 @@ jobs:
             --output-certificate SHA256SUMS.pem \
             SHA256SUMS
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: false
           generate_release_notes: true
