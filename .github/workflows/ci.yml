@@ -57,7 +57,7 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Install Zig
-        uses: mlugg/setup-zig@v1
+        uses: mlugg/setup-zig@v2
         with:
           # Pin a real stable release. With no version the action resolved to a
           # 0.16.0-dev build on the rotating ziglang.org/builds path, which 404s
