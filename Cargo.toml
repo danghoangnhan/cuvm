@@ -47,7 +47,7 @@ tempfile = "3.13"
 assert_fs = "1.1"
 dirs = "5.0"
 httpmock = "0.7"
-indicatif = "0.17"
+indicatif = "0.18"
 # Windows-only (target-gated in cuvm-platform); never compiled on the gnu/linux host.
 windows = "0.58"
 
