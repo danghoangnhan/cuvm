@@ -24,6 +24,7 @@ Commands:
   pin          Write `.cuda-version` in the current directory
   doctor       Diagnose driver/toolkit/PATH health; exit code is machine-readable
   uninstall    De-register a bundle (adopted installs are not deleted — ADR-005)
+  self         Manage the cuvm installation itself (uninstall)
   completions  Generate a shell completion script (bash/zsh/fish/powershell/elvish)
   help         Print this message or the help of the given subcommand(s)
 

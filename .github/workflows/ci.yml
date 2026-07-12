@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Cancel superseded runs on the same ref (a new push to a PR kills the old run).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -13,6 +18,7 @@ jobs:
   lint:
     name: fmt + clippy + test (linux/amd64)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust (stable + components)
@@ -30,6 +36,7 @@ jobs:
   compile-all:
     name: compile ${{ matrix.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -37,7 +44,7 @@ jobs:
           - name: linux/amd64
             target: x86_64-unknown-linux-musl
           - name: linux/arm64
-            target: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-musl
           - name: windows/amd64
             target: x86_64-pc-windows-gnu
     steps:
@@ -71,3 +78,18 @@ jobs:
             target/${{ matrix.target }}/release/cuvm
             target/${{ matrix.target }}/release/cuvm.exe
           if-no-files-found: warn
+
+  audit:
+    name: cargo audit (advisories)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # Fails on a RUSTSEC advisory against a (transitive) dep. cuvm parses
+      # untrusted network archives (tar/zip/lzma), so this is worth blocking on.
+      # Silence an unfixable-transitive advisory with `cargo audit --ignore RUSTSEC-…`.
+      - run: cargo audit

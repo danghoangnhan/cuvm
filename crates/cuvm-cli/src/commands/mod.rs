@@ -14,6 +14,7 @@ pub mod install;
 pub mod list;
 pub mod nccl;
 pub mod pin;
+pub mod self_uninstall;
 pub mod shell;
 pub mod r#use;
 pub mod which;
@@ -260,6 +261,12 @@ pub enum Command {
         /// Version handle to deregister (e.g. `12.4`).
         spec: String,
     },
+    /// Manage the cuvm installation itself (uninstall).
+    #[command(name = "self")]
+    SelfManage {
+        #[command(subcommand)]
+        command: SelfCommand,
+    },
     /// Generate a shell completion script (bash/zsh/fish/powershell/elvish).
     Completions {
         /// Target shell for the completion script.
@@ -324,6 +331,17 @@ pub enum NcclCommand {
     },
     /// List NCCL payloads in the content store and their toolkits.
     Ls,
+}
+
+/// `cuvm self <...>` — manage the cuvm install itself.
+#[derive(Debug, Subcommand)]
+pub enum SelfCommand {
+    /// Remove the cuvm binary and data dir (`~/.cuvm`, incl. installed toolkits).
+    Uninstall {
+        /// Skip the interactive confirmation prompt.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
 }
 
 impl Command {
@@ -505,6 +523,9 @@ impl Command {
                 install::run_uninstall(deps.inventory.as_ref(), &deps.home, &spec)?;
                 Ok(0)
             }
+            Command::SelfManage { command } => match command {
+                SelfCommand::Uninstall { yes } => self_uninstall::run(&deps.home, yes),
+            },
             Command::Completions { shell } => {
                 completions::run(shell)?;
                 Ok(0)
