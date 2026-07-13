@@ -47,7 +47,7 @@ mod sys {
             RegOpenKeyExW(
                 HKEY_CURRENT_USER,
                 w!("Environment"),
-                0,
+                Some(0),
                 KEY_READ,
                 &raw mut hkey,
             )
@@ -97,7 +97,7 @@ mod sys {
             RegOpenKeyExW(
                 HKEY_CURRENT_USER,
                 w!("Environment"),
-                0,
+                Some(0),
                 KEY_WRITE,
                 &raw mut hkey,
             )
@@ -107,7 +107,7 @@ mod sys {
                 data.as_ptr().cast::<u8>(),
                 data.len() * std::mem::size_of::<u16>(),
             );
-            let r = RegSetValueExW(hkey, w!("Path"), 0, REG_EXPAND_SZ, Some(bytes));
+            let r = RegSetValueExW(hkey, w!("Path"), Some(0), REG_EXPAND_SZ, Some(bytes));
             let _ = RegCloseKey(hkey);
             r.ok()?;
             // Broadcast so already-open shells/Explorer pick up the change.
