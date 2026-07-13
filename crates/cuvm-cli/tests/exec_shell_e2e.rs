@@ -455,5 +455,5 @@ fn ls_remote_nccl_major_prefix_and_empty_result() {
         .assert()
         .success()
         .stdout(predicates::str::is_empty());
-    index.assert_hits(2);
+    index.assert_calls(2);
 }
