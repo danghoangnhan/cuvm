@@ -15,6 +15,7 @@ pub mod list;
 pub mod nccl;
 pub mod pin;
 pub mod self_uninstall;
+pub mod self_update;
 pub mod shell;
 pub mod r#use;
 pub mod which;
@@ -261,7 +262,7 @@ pub enum Command {
         /// Version handle to deregister (e.g. `12.4`).
         spec: String,
     },
-    /// Manage the cuvm installation itself (uninstall).
+    /// Manage the cuvm installation itself (update, uninstall).
     #[command(name = "self")]
     SelfManage {
         #[command(subcommand)]
@@ -336,6 +337,18 @@ pub enum NcclCommand {
 /// `cuvm self <...>` — manage the cuvm install itself.
 #[derive(Debug, Subcommand)]
 pub enum SelfCommand {
+    /// Download, verify (sha256), and atomically swap in a newer cuvm release.
+    Update {
+        /// Only report whether a newer release exists; download and change nothing.
+        #[arg(long)]
+        check: bool,
+        /// Reinstall even if already on the latest version.
+        #[arg(long)]
+        force: bool,
+        /// Install a specific version instead of the latest (e.g. `0.2.0`; also rolls back).
+        #[arg(long)]
+        version: Option<String>,
+    },
     /// Remove the cuvm binary and data dir (`~/.cuvm`, incl. installed toolkits).
     Uninstall {
         /// Skip the interactive confirmation prompt.
@@ -524,6 +537,11 @@ impl Command {
                 Ok(0)
             }
             Command::SelfManage { command } => match command {
+                SelfCommand::Update {
+                    check,
+                    force,
+                    version,
+                } => self_update::run(&deps.home, check, force, version.as_deref()),
                 SelfCommand::Uninstall { yes } => self_uninstall::run(&deps.home, yes),
             },
             Command::Completions { shell } => {

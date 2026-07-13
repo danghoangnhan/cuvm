@@ -38,6 +38,9 @@ lzma-rs = "0.3"
 # Pure-Rust deflate only (no C-backed xz2/lzma-sys/bzip2-sys/zstd codecs), so the
 # static musl build stays fully self-contained; members opt into codecs as needed.
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+# Pure-Rust gzip (miniz_oxide backend, no C zlib) to read our own `.tar.gz`
+# release archives during `cuvm self update`; keeps the musl build static.
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
 insta = "1.40"
 assert_cmd = "2.0"

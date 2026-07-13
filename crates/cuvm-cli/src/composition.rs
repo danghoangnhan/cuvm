@@ -88,6 +88,24 @@ pub fn cache_dir(home: &std::path::Path) -> PathBuf {
     home.join("cache")
 }
 
+/// GitHub API base for `cuvm self update`'s latest-release lookup, overridable
+/// via `CUVM_SELF_UPDATE_API` (tests point this at an `httpmock` server). The
+/// URL fetched is `<base>/releases/latest`, so no trailing slash.
+#[must_use]
+pub fn self_update_api_base() -> String {
+    std::env::var("CUVM_SELF_UPDATE_API")
+        .unwrap_or_else(|_| "https://api.github.com/repos/danghoangnhan/cuvm".to_string())
+}
+
+/// Release-asset base for `cuvm self update`, sharing the `CUVM_DOWNLOAD_BASE`
+/// knob documented by `install.sh`/`install.ps1` (mirror/air-gapped hosts, and
+/// tests). Assets are fetched as `<base>/v<ver>/<asset>`, so no trailing slash.
+#[must_use]
+pub fn release_download_base() -> String {
+    std::env::var("CUVM_DOWNLOAD_BASE")
+        .unwrap_or_else(|_| "https://github.com/danghoangnhan/cuvm/releases/download".to_string())
+}
+
 /// Resolve `CUVM_HOME` from the environment, with `~/.cuvm` as fallback.
 #[must_use]
 pub fn cuvm_home() -> PathBuf {
