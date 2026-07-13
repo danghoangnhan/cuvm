@@ -87,5 +87,5 @@ fn fetch_of_already_complete_file_is_a_noop() {
 
     assert_eq!(out, cache.path().join("c.tar.xz"));
     // No network hit: the mock was never called.
-    m.assert_hits(0);
+    m.assert_calls(0);
 }
