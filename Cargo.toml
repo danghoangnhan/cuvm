@@ -49,7 +49,7 @@ mockall = "0.13"
 tempfile = "3.13"
 assert_fs = "1.1"
 dirs = "6.0"
-httpmock = "0.7"
+httpmock = "0.8"
 indicatif = "0.18"
 # Windows-only (target-gated in cuvm-platform); never compiled on the gnu/linux host.
 windows = "0.58"
