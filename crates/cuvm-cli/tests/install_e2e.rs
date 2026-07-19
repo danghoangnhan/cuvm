@@ -20,6 +20,7 @@ fn cuvm() -> Command {
 /// xz encoder — only the pure-Rust `lzma-rs` decoder used at install time).
 fn make_component_tarxz(dir: &Path, comp: &str, ver: &str) -> (Vec<u8>, String) {
     use sha2::{Digest, Sha256};
+    use std::fmt::Write;
     use std::process::Command as ProcCommand;
 
     let wrapper = format!("{comp}-linux-x86_64-{ver}-archive");
@@ -43,7 +44,11 @@ fn make_component_tarxz(dir: &Path, comp: &str, ver: &str) -> (Vec<u8>, String) 
         .expect("invoke tar -cJf to build fixture");
     assert!(status.success(), "tar must build the .tar.xz fixture");
     let bytes = std::fs::read(&archive).unwrap();
-    let sha = format!("{:x}", Sha256::digest(&bytes));
+    let digest = Sha256::digest(&bytes);
+    let mut sha = String::with_capacity(64);
+    for b in &digest {
+        write!(&mut sha, "{b:02x}").unwrap();
+    }
     (bytes, sha)
 }
 
@@ -166,6 +171,7 @@ fn serve_redist_124(server: &MockServer, fixtures: &Path) {
 #[cfg(unix)]
 fn make_cudnn_tarxz(dir: &Path, ver: &str, cuda_major: u32) -> (Vec<u8>, String) {
     use sha2::{Digest, Sha256};
+    use std::fmt::Write;
     use std::process::Command as ProcCommand;
 
     let wrapper = format!("cudnn-linux-x86_64-{ver}_cuda{cuda_major}-archive");
@@ -190,7 +196,11 @@ fn make_cudnn_tarxz(dir: &Path, ver: &str, cuda_major: u32) -> (Vec<u8>, String)
         .expect("tar -cJf builds the cudnn fixture");
     assert!(status.success());
     let bytes = std::fs::read(&archive).unwrap();
-    let sha = format!("{:x}", Sha256::digest(&bytes));
+    let digest = Sha256::digest(&bytes);
+    let mut sha = String::with_capacity(64);
+    for b in &digest {
+        write!(&mut sha, "{b:02x}").unwrap();
+    }
     (bytes, sha)
 }
 

@@ -87,10 +87,15 @@ fn make_nccl_txz(dir: &Path, file_name: &str) -> std::path::PathBuf {
 /// `tar -cJf` the single `member` dir under `cwd`; return `(bytes, sha256-hex)`.
 fn tarxz(dir: &Path, cwd: &Path, member: &str) -> (Vec<u8>, String) {
     use sha2::{Digest, Sha256};
+    use std::fmt::Write;
     let archive = dir.join(format!("{member}.tar.xz"));
     run_tar(&archive, cwd, member);
     let bytes = std::fs::read(&archive).unwrap();
-    let sha = format!("{:x}", Sha256::digest(&bytes));
+    let digest = Sha256::digest(&bytes);
+    let mut sha = String::with_capacity(64);
+    for b in &digest {
+        write!(&mut sha, "{b:02x}").unwrap();
+    }
     (bytes, sha)
 }
 
