@@ -34,6 +34,7 @@ fn asset_name() -> &'static str {
 /// Shells out to system `tar -czf` (the workspace ships only the pure-Rust gzip
 /// *decoder*).
 fn make_targz(dir: &Path, tag: &str, ver: &str, entries: &[(&str, &str)]) -> (Vec<u8>, String) {
+    use std::fmt::Write;
     use std::process::Command as Proc;
     let stage = format!("cuvm-{ver}-{}", asset_name());
     let staging = dir.join(format!("stage-{tag}-{stage}"));
@@ -53,7 +54,11 @@ fn make_targz(dir: &Path, tag: &str, ver: &str, entries: &[(&str, &str)]) -> (Ve
         .expect("invoke tar -czf to build fixture");
     assert!(status.success(), "tar must build the .tar.gz fixture");
     let bytes = std::fs::read(&archive).unwrap();
-    let sha = format!("{:x}", Sha256::digest(&bytes));
+    let digest = Sha256::digest(&bytes);
+    let mut sha = String::with_capacity(64);
+    for b in &digest {
+        write!(&mut sha, "{b:02x}").unwrap();
+    }
     (bytes, sha)
 }
 

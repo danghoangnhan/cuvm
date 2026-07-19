@@ -28,6 +28,7 @@ use std::path::Path;
 /// Returns `(bytes, sha256-hex)`.
 fn make_component_tarxz(dir: &Path, comp: &str, comp_ver: &str, lib: &str) -> (Vec<u8>, String) {
     use sha2::{Digest, Sha256};
+    use std::fmt::Write;
     let wrapper = format!("{comp}-linux-x86_64-{comp_ver}-archive");
     let staging = dir.join(format!("stage-{comp}-{comp_ver}"));
     for (rel, body) in [("bin/nvcc", "#!/bin/sh\n"), (lib, "ELFPLACEHOLDER\n")] {
@@ -46,7 +47,11 @@ fn make_component_tarxz(dir: &Path, comp: &str, comp_ver: &str, lib: &str) -> (V
         .expect("invoke `tar -cJf` to build the fixture archive");
     assert!(status.success(), "tar must build the .tar.xz fixture");
     let bytes = std::fs::read(&archive).unwrap();
-    let sha = format!("{:x}", Sha256::digest(&bytes));
+    let digest = Sha256::digest(&bytes);
+    let mut sha = String::with_capacity(64);
+    for b in &digest {
+        write!(&mut sha, "{b:02x}").unwrap();
+    }
     (bytes, sha)
 }
 
