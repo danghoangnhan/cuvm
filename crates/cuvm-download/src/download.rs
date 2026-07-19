@@ -381,7 +381,7 @@ mod progress_tests {
     const HEAD_LEN: usize = 8; // pre-seeded into the .part
 
     fn sha_of(bytes: &[u8]) -> String {
-        format!("{:x}", Sha256::digest(bytes))
+        super::hex_encode(&Sha256::digest(bytes))
     }
 
     fn recording_downloader(cache: &Path) -> (Downloader, Arc<Recorder>) {
