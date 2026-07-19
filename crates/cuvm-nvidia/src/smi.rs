@@ -169,6 +169,14 @@ mod tests {
     use super::*;
     use cuvm_core::version::Version;
     use cuvm_core::GpuClass;
+    use std::sync::Mutex;
+
+    // `std::env::set_var`/`remove_var` race with `fork()` (called internally by
+    // `Command::output`) because both touch the global `environ` array without
+    // mutual exclusion.  Holding this lock in every test that either mutates env
+    // vars *or* spawns a child process serialises those two operations and
+    // eliminates the data race.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parses_driver_version_and_geforce_class() {
@@ -221,6 +229,9 @@ mod tests {
     fn new_honors_cuvm_nvidia_smi_env_override() {
         // The composition root builds the probe via `SmiProbe::new()`; an env
         // override lets the install e2e inject a fake driver without a GPU.
+        // Hold ENV_LOCK while mutating the process environment so this test
+        // cannot race with probe_parses_a_fake_nvidia_smi_script's fork() call.
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("CUVM_NVIDIA_SMI", "/some/fake/nvidia-smi-xyz");
         let probe = SmiProbe::new();
         assert_eq!(probe.binary, "/some/fake/nvidia-smi-xyz");
@@ -234,6 +245,9 @@ mod tests {
     fn probe_parses_a_fake_nvidia_smi_script() {
         use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
+        // Hold ENV_LOCK while spawning a child process so that concurrent env-var
+        // mutations (set_var/remove_var) cannot race with fork() inside Command::output().
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let fake = dir.path().join("nvidia-smi");
         {
