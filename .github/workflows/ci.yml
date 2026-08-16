@@ -65,7 +65,7 @@ jobs:
           # permanent /download/<ver> path.
           version: 0.13.0
       - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@v2.85.5
+        uses: taiki-e/install-action@v2.85.13
         with:
           tool: cargo-zigbuild
       - name: cross compile cuvm binary
@@ -86,7 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@v2.85.5
+      - uses: taiki-e/install-action@v2.85.13
         with:
           tool: cargo-audit
       # Fails on a RUSTSEC advisory against a (transitive) dep. cuvm parses
